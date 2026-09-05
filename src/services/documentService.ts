@@ -216,4 +216,11 @@ export class DocumentService {
     }
     return invoke('verify_signature', { data: docIdOrData, signature_index: 0 })
   }
+
+  static async printPdf(docIdOrData: string | number[]): Promise<void> {
+    if (typeof docIdOrData === 'string') {
+      return invoke<void>('session_print_pdf', { docId: docIdOrData })
+    }
+    return invoke<void>('print_pdf', { data: docIdOrData })
+  }
 }

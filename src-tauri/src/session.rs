@@ -446,15 +446,28 @@ mod tests {
         assert!(session.cached_bytes.is_some());
         session.dirty = false;
 
-        // mutate with closure returning Err
-        let err_res: Result<(), String> = session.mutate(|_doc| {
-            Err("Partial failure during operation".to_string())
+        // mutate with closure that performs partial modification to doc and then fails with Err
+        let err_res: Result<(), String> = session.mutate(|doc| {
+            // Perform actual modification (change rotation in doc dictionary)
+            let p_ids = doc.page_iter().collect::<Vec<_>>();
+            let p0 = p_ids[0];
+            if let Some(lopdf::Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&p0) {
+                dict.set("Rotate", lopdf::Object::Integer(180));
+            }
+            Err("Partial failure during operation after modifying doc".to_string())
         });
         assert!(err_res.is_err());
 
-        // Cache must be invalidated and dirty marked to prevent phantom cache
+        // Cache must be invalidated and dirty marked to prevent phantom cache of partially modified doc
         assert!(session.cached_bytes.is_none());
         assert!(session.dirty);
+
+        // When re-serialized, bytes reflect the modification (not stale cached bytes)
+        let reloaded = session.save_to_bytes().unwrap();
+        let reloaded_doc = lopdf::Document::load_mem(&reloaded).unwrap();
+        let p_ids = reloaded_doc.page_iter().collect::<Vec<_>>();
+        let rot = reloaded_doc.objects.get(&p_ids[0]).unwrap().as_dict().unwrap().get(b"Rotate").unwrap().as_i64().unwrap();
+        assert_eq!(rot, 180);
     }
 
     #[test]

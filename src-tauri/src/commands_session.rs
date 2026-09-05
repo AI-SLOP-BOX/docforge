@@ -282,3 +282,13 @@ pub fn session_verify_signature(
     let session = session_arc.read().map_err(|e| e.to_string())?;
     pdf_engine::verify_signature_in_doc(&session.doc)
 }
+
+#[tauri::command]
+pub fn session_print_pdf(
+    doc_id: String,
+    manager: tauri::State<'_, crate::session::SessionManager>,
+) -> Result<(), String> {
+    let session_arc = manager.get_session(&doc_id)?;
+    let mut session = session_arc.write().map_err(|e| e.to_string())?;
+    session.with_bytes(|bytes| pdf_engine::print_pdf(bytes))
+}

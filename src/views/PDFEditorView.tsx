@@ -340,10 +340,22 @@ export default function PDFEditorView() {
         await refreshHistoryStatus(docId)
       } catch (err) {
         console.error('Failed to sync updated bytes to session:', err)
+        showError(formatError(err, 'セッションの同期に失敗しました'))
+        throw err
       }
     }
     pushHistory(data)
-  }, [docId, pushHistory, refreshHistoryStatus])
+  }, [docId, pushHistory, refreshHistoryStatus, showError])
+
+  const handlePrint = useCallback(async () => {
+    const target = docId || pdfData
+    if (!target) return
+    try {
+      await DocumentService.printPdf(target)
+    } catch (err) {
+      showError(formatError(err, '印刷に失敗しました'))
+    }
+  }, [docId, pdfData, showError])
 
   // Command items for ⌘K Quick Launcher
   const commandItems = useMemo(() => {
@@ -385,7 +397,7 @@ export default function PDFEditorView() {
       <EditorHeader
         onOpen={handleOpen}
         onSave={handleSave}
-        onPrint={() => pdfData && invoke('print_pdf', { data: pdfData })}
+        onPrint={handlePrint}
         canSave={!!pdfData}
         undo={handleUndo}
         redo={handleRedo}

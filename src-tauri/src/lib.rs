@@ -569,6 +569,7 @@ pub fn run() {
             session_render_page_to_png,
             session_render_color_separation,
             session_verify_signature,
+            session_print_pdf,
         ])
         .manage(session::SessionManager::new())
         .run(tauri::generate_context!())
