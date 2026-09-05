@@ -105,4 +105,174 @@ mod tests {
         let count = get_page_count_from_data(&numbered).unwrap();
         assert_eq!(count, 2);
     }
+
+    #[test]
+    fn test_redact_area_preserves_other_content() {
+        let pdf = create_test_pdf(1);
+        // Initial PDF contains "Page 1"
+        let initial_doc = Document::load_mem(&pdf).expect("Load initial PDF");
+        let initial_page_ids = get_page_ids(&initial_doc);
+        let initial_contents = initial_doc
+            .get_page_content(initial_page_ids[0])
+            .expect("Get content");
+        let initial_text = String::from_utf8_lossy(&initial_contents);
+        assert!(
+            initial_text.contains("Page 1"),
+            "Original content must contain Page 1"
+        );
+
+        // Redact a small box at (10, 10, 50, 50), not overlapping the text at (50, 750)
+        let redacted = redact_area(&pdf, 0, 10.0, 10.0, 50.0, 50.0, "#000000")
+            .expect("Redact area should succeed");
+
+        let redacted_doc = Document::load_mem(&redacted).expect("Load redacted PDF");
+        let redacted_page_ids = get_page_ids(&redacted_doc);
+        let redacted_contents = redacted_doc
+            .get_page_content(redacted_page_ids[0])
+            .expect("Get redacted content");
+        let redacted_text = String::from_utf8_lossy(&redacted_contents);
+
+        // Crucial check: the existing page content must be PRESERVED, not replaced by just a black box!
+        assert!(
+            redacted_text.contains("Page 1"),
+            "Existing page content must be preserved after redact_area"
+        );
+        assert!(
+            redacted_text.contains("re"),
+            "Redaction rectangle must be appended"
+        );
+    }
+
+    #[test]
+    fn test_redact_purges_string_completely() {
+        let secret = "SECRET-123456";
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.add_object(Object::Dictionary(Dictionary::new()));
+
+        let content = format!("BT /F1 12 Tf 50 750 Td ({secret}) Tj ET");
+        let content_id = doc.add_object(Object::Stream(lopdf::Stream::new(
+            Dictionary::new(),
+            content.into_bytes(),
+        )));
+
+        let mut page_dict = Dictionary::new();
+        page_dict.set("Type", Object::Name("Page".into()));
+        page_dict.set("Parent", Object::Reference(pages_id));
+        page_dict.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(595.0),
+                Object::Real(842.0),
+            ]),
+        );
+        page_dict.set("Contents", Object::Reference(content_id));
+
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+
+        let mut pages_dict = Dictionary::new();
+        pages_dict.set("Type", Object::Name("Pages".into()));
+        pages_dict.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        pages_dict.set("Count", Object::Integer(1));
+        doc.objects.insert(pages_id, Object::Dictionary(pages_dict));
+
+        let mut root_dict = Dictionary::new();
+        root_dict.set("Type", Object::Name("Catalog".into()));
+        root_dict.set("Pages", Object::Reference(pages_id));
+        let root_id = doc.add_object(Object::Dictionary(root_dict));
+        doc.trailer.set("Root", Object::Reference(root_id));
+
+        let mut initial_pdf = Vec::new();
+        doc.save_to(&mut initial_pdf).unwrap();
+
+        // 1. Verify secret is present before redaction
+        assert!(
+            String::from_utf8_lossy(&initial_pdf).contains(secret),
+            "Secret must exist in initial raw PDF bytes"
+        );
+
+        // 2. Perform deep text redaction
+        let purged_pdf =
+            redact_text_deep(&initial_pdf, secret, "#000000").expect("Deep redaction must succeed");
+
+        // 3. Byte-level verification: raw byte search
+        assert!(
+            !String::from_utf8_lossy(&purged_pdf).contains(secret),
+            "Physical raw PDF bytes must NOT contain secret after deep redaction"
+        );
+
+        // 4. Object stream level verification: lopdf document decode
+        let purged_doc = Document::load_mem(&purged_pdf).expect("Load purged PDF");
+        for (_, object) in purged_doc.objects.iter() {
+            if let Object::Stream(ref stream) = object {
+                if let Ok(decoded) = stream.decompressed_content() {
+                    assert!(
+                        !String::from_utf8_lossy(&decoded).contains(secret),
+                        "Decompressed stream must NOT contain secret after deep redaction"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_searchable_pdf_structure_and_fallback() {
+        let temp_output =
+            std::env::temp_dir().join(format!("searchable_test_{}.pdf", std::process::id()));
+        let output_path = temp_output.to_string_lossy().to_string();
+
+        let ocr_text = "Line 1: Scanned invoice text\nLine 2: Total amount 50000 JPY";
+        crate::ocr_engine::create_searchable_pdf(&[], ocr_text, &output_path)
+            .expect("Searchable PDF creation should succeed");
+
+        let data = std::fs::read(&output_path).expect("Read output PDF");
+        let _ = std::fs::remove_file(&output_path);
+
+        let doc = Document::load_mem(&data).expect("Must parse as valid PDF");
+
+        // Check Catalog Root exists
+        let root_ref = doc.trailer.get(b"Root").expect("Must have Root in trailer");
+        let root_id = root_ref.as_reference().expect("Root must be reference");
+        let root_dict = doc
+            .objects
+            .get(&root_id)
+            .and_then(|o| o.as_dict().ok())
+            .expect("Root must be dict");
+        assert_eq!(
+            root_dict.get(b"Type").unwrap().as_name().unwrap(),
+            b"Catalog"
+        );
+
+        // Check Pages dictionary
+        let pages_ref = root_dict.get(b"Pages").expect("Catalog must have Pages");
+        let pages_id = pages_ref.as_reference().expect("Pages must be reference");
+        let pages_dict = doc
+            .objects
+            .get(&pages_id)
+            .and_then(|o| o.as_dict().ok())
+            .expect("Pages must be dict");
+        assert_eq!(
+            pages_dict.get(b"Type").unwrap().as_name().unwrap(),
+            b"Pages"
+        );
+
+        let page_ids = get_page_ids(&doc);
+        assert_eq!(page_ids.len(), 1);
+
+        // Verify page has Parent reference and Resources with Font
+        let page_dict = doc
+            .objects
+            .get(&page_ids[0])
+            .and_then(|o| o.as_dict().ok())
+            .expect("Page must be dict");
+        assert_eq!(
+            page_dict.get(b"Parent").unwrap().as_reference().unwrap(),
+            pages_id
+        );
+        assert!(
+            page_dict.get(b"Resources").is_ok(),
+            "Page must have Resources dict"
+        );
+    }
 }

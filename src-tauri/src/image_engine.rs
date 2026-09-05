@@ -137,6 +137,9 @@ fn to_grayscale(rgb: &RgbImage) -> Vec<u8> {
 
 fn sobel_edges(gray: &[u8], w: u32, h: u32) -> Vec<u8> {
     let mut edges = vec![0u8; (w * h) as usize];
+    if w < 3 || h < 3 {
+        return edges;
+    }
 
     for y in 1..h - 1 {
         for x in 1..w - 1 {

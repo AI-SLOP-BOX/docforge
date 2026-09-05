@@ -1,12 +1,14 @@
-pub mod pdf_engine;
-pub mod image_engine;
-pub mod ocr_engine;
-pub mod commands_text;
+pub mod commands_advanced;
 pub mod commands_io;
 pub mod commands_prod;
-pub use commands_text::*;
+pub mod commands_text;
+pub mod image_engine;
+pub mod ocr_engine;
+pub mod pdf_engine;
+pub use commands_advanced::*;
 pub use commands_io::*;
 pub use commands_prod::*;
+pub use commands_text::*;
 
 // ===== PDF CORE =====
 
@@ -48,25 +50,66 @@ fn create_blank_pdf(width: f64, height: f64, page_count: usize) -> Result<Vec<u8
 // ===== TEXT & IMAGES =====
 
 #[tauri::command]
-fn add_text(data: Vec<u8>, page_index: usize, text: String, x: f64, y: f64, size: f64, color: String) -> Result<Vec<u8>, String> {
+fn add_text(
+    data: Vec<u8>,
+    page_index: usize,
+    text: String,
+    x: f64,
+    y: f64,
+    size: f64,
+    color: String,
+) -> Result<Vec<u8>, String> {
     pdf_engine::add_text(&data, page_index, &text, x, y, size, &color)
 }
 
 #[tauri::command]
-fn add_image_to_page(data: Vec<u8>, page_index: usize, image_data: Vec<u8>, x: f64, y: f64, width: f64, height: f64) -> Result<Vec<u8>, String> {
+fn add_image_to_page(
+    data: Vec<u8>,
+    page_index: usize,
+    image_data: Vec<u8>,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<Vec<u8>, String> {
     pdf_engine::add_image_to_page(&data, page_index, &image_data, x, y, width, height)
 }
 
 #[tauri::command]
-fn crop_page(data: Vec<u8>, page_index: usize, x: f64, y: f64, width: f64, height: f64) -> Result<Vec<u8>, String> {
+fn crop_page(
+    data: Vec<u8>,
+    page_index: usize,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<Vec<u8>, String> {
     pdf_engine::crop_page(&data, page_index, x, y, width, height)
 }
 
 // ===== WATERMARK =====
 
 #[tauri::command]
-fn add_watermark(data: Vec<u8>, text: String, opacity: f32, rotation: f32, font_size: f32, color: String, all_pages: bool, page_indices: Vec<usize>) -> Result<Vec<u8>, String> {
-    pdf_engine::add_watermark(&data, &text, opacity, rotation, font_size, &color, all_pages, &page_indices)
+fn add_watermark(
+    data: Vec<u8>,
+    text: String,
+    opacity: f32,
+    rotation: f32,
+    font_size: f32,
+    color: String,
+    all_pages: bool,
+    page_indices: Vec<usize>,
+) -> Result<Vec<u8>, String> {
+    pdf_engine::add_watermark(
+        &data,
+        &text,
+        opacity,
+        rotation,
+        font_size,
+        &color,
+        all_pages,
+        &page_indices,
+    )
 }
 
 #[tauri::command]
@@ -77,34 +120,93 @@ fn remove_watermarks(data: Vec<u8>) -> Result<Vec<u8>, String> {
 // ===== ANNOTATIONS =====
 
 #[tauri::command]
-fn add_highlight(data: Vec<u8>, page_index: usize, x: f64, y: f64, width: f64, height: f64, color: String) -> Result<Vec<u8>, String> {
+fn add_highlight(
+    data: Vec<u8>,
+    page_index: usize,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    color: String,
+) -> Result<Vec<u8>, String> {
     pdf_engine::add_highlight(&data, page_index, x, y, width, height, &color)
 }
 
 #[tauri::command]
-fn add_underline(data: Vec<u8>, page_index: usize, x: f64, y: f64, width: f64, color: String) -> Result<Vec<u8>, String> {
+fn add_underline(
+    data: Vec<u8>,
+    page_index: usize,
+    x: f64,
+    y: f64,
+    width: f64,
+    color: String,
+) -> Result<Vec<u8>, String> {
     pdf_engine::add_underline(&data, page_index, x, y, width, &color)
 }
 
 #[tauri::command]
-fn add_sticky_note(data: Vec<u8>, page_index: usize, x: f64, y: f64, text: String, color: String) -> Result<Vec<u8>, String> {
+fn add_sticky_note(
+    data: Vec<u8>,
+    page_index: usize,
+    x: f64,
+    y: f64,
+    text: String,
+    color: String,
+) -> Result<Vec<u8>, String> {
     pdf_engine::add_sticky_note(&data, page_index, x, y, &text, &color)
 }
 
 #[tauri::command]
-fn add_rectangle(data: Vec<u8>, page_index: usize, x: f64, y: f64, width: f64, height: f64, stroke_color: String, fill_color: String, stroke_width: f32) -> Result<Vec<u8>, String> {
-    pdf_engine::add_rectangle(&data, page_index, x, y, width, height, &stroke_color, &fill_color, stroke_width)
+fn add_rectangle(
+    data: Vec<u8>,
+    page_index: usize,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    stroke_color: String,
+    fill_color: String,
+    stroke_width: f32,
+) -> Result<Vec<u8>, String> {
+    pdf_engine::add_rectangle(
+        &data,
+        page_index,
+        x,
+        y,
+        width,
+        height,
+        &stroke_color,
+        &fill_color,
+        stroke_width,
+    )
 }
 
 #[tauri::command]
-fn add_line(data: Vec<u8>, page_index: usize, x1: f64, y1: f64, x2: f64, y2: f64, color: String, width: f32) -> Result<Vec<u8>, String> {
+fn add_line(
+    data: Vec<u8>,
+    page_index: usize,
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+    color: String,
+    width: f32,
+) -> Result<Vec<u8>, String> {
     pdf_engine::add_line(&data, page_index, x1, y1, x2, y2, &color, width)
 }
 
 // ===== REDACTION =====
 
 #[tauri::command]
-fn redact_area(data: Vec<u8>, page_index: usize, x: f64, y: f64, width: f64, height: f64, color: String) -> Result<Vec<u8>, String> {
+fn redact_area(
+    data: Vec<u8>,
+    page_index: usize,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    color: String,
+) -> Result<Vec<u8>, String> {
     pdf_engine::redact_area(&data, page_index, x, y, width, height, &color)
 }
 
@@ -116,7 +218,13 @@ fn redact_text(data: Vec<u8>, search_text: String, replacement: String) -> Resul
 // ===== HEADERS & FOOTERS =====
 
 #[tauri::command]
-fn add_header_footer(data: Vec<u8>, header_text: String, footer_text: String, font_size: f32, margin: f32) -> Result<Vec<u8>, String> {
+fn add_header_footer(
+    data: Vec<u8>,
+    header_text: String,
+    footer_text: String,
+    font_size: f32,
+    margin: f32,
+) -> Result<Vec<u8>, String> {
     pdf_engine::add_header_footer(&data, &header_text, &footer_text, font_size, margin)
 }
 
@@ -130,7 +238,13 @@ fn add_bookmark(data: Vec<u8>, title: String, page_index: usize) -> Result<Vec<u
 // ===== BATES NUMBERING =====
 
 #[tauri::command]
-fn add_bates_number(data: Vec<u8>, prefix: String, start_number: usize, font_size: f32, margin: f32) -> Result<Vec<u8>, String> {
+fn add_bates_number(
+    data: Vec<u8>,
+    prefix: String,
+    start_number: usize,
+    font_size: f32,
+    margin: f32,
+) -> Result<Vec<u8>, String> {
     pdf_engine::add_bates_number(&data, &prefix, start_number, font_size, margin)
 }
 
@@ -213,7 +327,16 @@ fn flatten_form(data: Vec<u8>) -> Result<Vec<u8>, String> {
 }
 
 #[tauri::command]
-fn add_stamp(data: Vec<u8>, page_index: usize, text: String, x: f64, y: f64, rotation: f32, color: String, font_size: f32) -> Result<Vec<u8>, String> {
+fn add_stamp(
+    data: Vec<u8>,
+    page_index: usize,
+    text: String,
+    x: f64,
+    y: f64,
+    rotation: f32,
+    color: String,
+    font_size: f32,
+) -> Result<Vec<u8>, String> {
     pdf_engine::add_stamp(&data, page_index, &text, x, y, rotation, &color, font_size)
 }
 
@@ -231,7 +354,12 @@ fn get_pdf_metadata(data: Vec<u8>) -> Result<serde_json::Value, String> {
 // ===== IMAGE PROCESSING =====
 
 #[tauri::command]
-fn process_scanned_images(paths: Vec<String>, remove_shadow: bool, correct_perspective: bool, dpi: u32) -> Result<Vec<u8>, String> {
+fn process_scanned_images(
+    paths: Vec<String>,
+    remove_shadow: bool,
+    correct_perspective: bool,
+    dpi: u32,
+) -> Result<Vec<u8>, String> {
     image_engine::process_scanned_images(&paths, remove_shadow, correct_perspective, dpi)
 }
 
@@ -249,14 +377,26 @@ fn create_epub(text: String, output_path: String, title: String) -> Result<(), S
 }
 
 #[tauri::command]
-fn create_searchable_pdf(original_paths: Vec<String>, ocr_text: String, output_path: String) -> Result<(), String> {
+fn create_searchable_pdf(
+    original_paths: Vec<String>,
+    ocr_text: String,
+    output_path: String,
+) -> Result<(), String> {
     ocr_engine::create_searchable_pdf(&original_paths, &ocr_text, &output_path)
 }
 
 // ===== DEEP REDACTION =====
 
 #[tauri::command]
-fn deep_redact(data: Vec<u8>, page_index: usize, x: f64, y: f64, width: f64, height: f64, color: String) -> Result<Vec<u8>, String> {
+fn deep_redact(
+    data: Vec<u8>,
+    page_index: usize,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    color: String,
+) -> Result<Vec<u8>, String> {
     pdf_engine::deep_redact(&data, page_index, x, y, width, height, &color)
 }
 
@@ -283,12 +423,21 @@ fn get_annotations(data: Vec<u8>) -> Result<Vec<serde_json::Value>, String> {
 }
 
 #[tauri::command]
-fn add_annotation_reply(data: Vec<u8>, annotation_id: (u32, u16), author: String, contents: String) -> Result<Vec<u8>, String> {
+fn add_annotation_reply(
+    data: Vec<u8>,
+    annotation_id: (u32, u16),
+    author: String,
+    contents: String,
+) -> Result<Vec<u8>, String> {
     pdf_engine::add_annotation_reply(&data, annotation_id, &author, &contents)
 }
 
 #[tauri::command]
-fn set_annotation_status(data: Vec<u8>, annotation_id: (u32, u16), status: String) -> Result<Vec<u8>, String> {
+fn set_annotation_status(
+    data: Vec<u8>,
+    annotation_id: (u32, u16),
+    status: String,
+) -> Result<Vec<u8>, String> {
     pdf_engine::set_annotation_status(&data, annotation_id, &status)
 }
 
@@ -304,150 +453,7 @@ fn convert_to_pdfa(data: Vec<u8>) -> Result<Vec<u8>, String> {
     pdf_engine::convert_to_pdfa(&data)
 }
 
-
-
 // ===== DIGITAL SIGNATURE =====
-
-#[tauri::command]
-fn add_digital_signature(data: Vec<u8>, page_index: usize, x: f64, y: f64, width: f64, height: f64, signer_name: String, reason: String) -> Result<Vec<u8>, String> {
-    pdf_engine::add_digital_signature(&data, page_index, x, y, width, height, &signer_name, &reason, None)
-}
-
-#[tauri::command]
-fn verify_signature(data: Vec<u8>, signature_index: usize) -> Result<serde_json::Value, String> {
-    pdf_engine::verify_signature(&data, signature_index)
-}
-
-// ===== FONT =====
-
-#[tauri::command]
-fn embed_font(data: Vec<u8>, page_index: usize, font_path: String) -> Result<Vec<u8>, String> {
-    pdf_engine::embed_font(&data, page_index, &font_path)
-}
-
-// ===== FORMS =====
-
-#[tauri::command]
-fn add_form_field(data: Vec<u8>, page_index: usize, field_name: String, field_type: String, x: f64, y: f64, width: f64, height: f64, default_value: String) -> Result<Vec<u8>, String> {
-    pdf_engine::add_form_field(&data, page_index, &field_name, &field_type, x, y, width, height, &default_value)
-}
-
-#[tauri::command]
-fn add_calculated_field(data: Vec<u8>, page_index: usize, field_name: String, formula: String, x: f64, y: f64, width: f64, height: f64) -> Result<Vec<u8>, String> {
-    pdf_engine::add_calculated_field(&data, page_index, &field_name, &formula, x, y, width, height)
-}
-
-// ===== XFDF/FDF =====
-
-#[tauri::command]
-fn export_xfdf(data: Vec<u8>) -> Result<String, String> {
-    pdf_engine::export_xfdf(&data)
-}
-
-#[tauri::command]
-fn import_xfdf(data: Vec<u8>, xfdf_content: String) -> Result<Vec<u8>, String> {
-    pdf_engine::import_xfdf(&data, &xfdf_content)
-}
-
-// ===== HARDWARE TOKEN =====
-
-#[tauri::command]
-fn detect_hardware_tokens() -> Result<Vec<serde_json::Value>, String> {
-    let tokens = pdf_engine::detect_hardware_tokens()?;
-    let result: Vec<serde_json::Value> = tokens.iter().map(|t| {
-        serde_json::json!({
-            "slot_id": t.slot_id,
-            "label": t.label,
-            "manufacturer": t.manufacturer,
-            "serial": t.serial,
-            "initialized": t.initialized,
-        })
-    }).collect();
-    Ok(result)
-}
-
-#[tauri::command]
-fn sign_with_hardware_token(data: Vec<u8>, slot_id: u32, pin: String, page_index: usize, x: f64, y: f64, width: f64, height: f64, signer_name: String, reason: String) -> Result<Vec<u8>, String> {
-    pdf_engine::sign_with_hardware_token(&data, slot_id, &pin, page_index, x, y, width, height, &signer_name, &reason)
-}
-
-#[tauri::command]
-fn verify_hardware_token_signature(data: Vec<u8>, slot_id: u32) -> Result<serde_json::Value, String> {
-    pdf_engine::verify_hardware_token_signature(&data, slot_id)
-}
-
-// ===== PDF REPAIR =====
-
-#[tauri::command]
-fn repair_pdf(data: Vec<u8>) -> Result<Vec<u8>, String> {
-    pdf_engine::repair_pdf(&data)
-}
-
-// ===== PDF UNLOCK =====
-
-#[tauri::command]
-fn unlock_pdf(data: Vec<u8>, password: String) -> Result<Vec<u8>, String> {
-    pdf_engine::unlock_pdf(&data, &password)
-}
-
-// ===== QUALITY COMPRESSION =====
-
-#[tauri::command]
-fn compress_pdf_quality(data: Vec<u8>, quality: u8) -> Result<Vec<u8>, String> {
-    pdf_engine::compress_pdf_quality(&data, quality)
-}
-
-// ===== PAGE NUMBERS =====
-
-#[tauri::command]
-fn add_page_numbers(data: Vec<u8>, position: String, font_size: f32, start_number: usize) -> Result<Vec<u8>, String> {
-    pdf_engine::add_page_numbers(&data, &position, font_size, start_number)
-}
-
-// ===== ADVANCED PROFESSIONAL FEATURES =====
-
-#[tauri::command]
-fn create_action_wizard(name: String, steps: Vec<serde_json::Value>) -> Result<String, String> {
-    let action_steps: Vec<pdf_engine::ActionStep> = steps.iter().map(|s| {
-        pdf_engine::ActionStep {
-            action_type: s.get("action_type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            params: s.get("params").cloned().unwrap_or(serde_json::Value::Null),
-        }
-    }).collect();
-    pdf_engine::create_action_wizard(&name, &action_steps)
-}
-
-#[tauri::command]
-fn execute_action_wizard(data: Vec<u8>, wizard_json: String) -> Result<Vec<u8>, String> {
-    pdf_engine::execute_action_wizard(&data, &wizard_json)
-}
-
-#[tauri::command]
-fn aggregate_form_data(pdf_paths: Vec<String>) -> Result<serde_json::Value, String> {
-    pdf_engine::aggregate_form_data(&pdf_paths)
-}
-
-#[tauri::command]
-fn embed_javascript(data: Vec<u8>, script: String) -> Result<Vec<u8>, String> {
-    pdf_engine::embed_javascript(&data, &script)
-}
-
-#[tauri::command]
-fn add_bookmark_tree(data: Vec<u8>, bookmarks: Vec<serde_json::Value>) -> Result<Vec<u8>, String> {
-    pdf_engine::add_bookmark_tree(&data, &bookmarks)
-}
-
-#[tauri::command]
-fn visual_diff(data1: Vec<u8>, data2: Vec<u8>, output_path: String) -> Result<(), String> {
-    pdf_engine::visual_diff(&data1, &data2, &output_path)
-}
-
-#[tauri::command]
-fn list_digital_ids() -> Result<Vec<pdf_engine::DigitalID>, String> {
-    pdf_engine::list_digital_ids()
-}
-
-
 
 // ===== APP =====
 

@@ -1,10 +1,12 @@
 pub mod accessibility;
+pub mod annot_manage;
 pub mod annotations;
 pub mod batch_ops;
 pub mod common;
 pub mod convert;
 pub mod export_office;
 pub mod font_style;
+pub mod form_creator;
 pub mod forms;
 pub mod inspect;
 pub mod ocr_layout;

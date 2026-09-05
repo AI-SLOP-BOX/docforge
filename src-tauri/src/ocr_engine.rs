@@ -157,13 +157,25 @@ fn run_tesseract(
     Ok((reconstructed_text, avg_conf, suspects))
 }
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static OCR_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 fn pdf_to_images(pdf_path: &Path) -> Result<Vec<String>, String> {
-    let dir = std::env::temp_dir();
-    let stem = pdf_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "temp".into());
-    let prefix = dir.join(&stem).to_string_lossy().to_string();
+    let count = OCR_TEMP_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let unique_name = format!(
+        "docforge_ocr_{}_{}_{}",
+        std::process::id(),
+        count,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let dir = std::env::temp_dir().join(unique_name);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
+
+    let prefix = dir.join("page").to_string_lossy().to_string();
 
     let cmd = Command::new("pdftoppm")
         .args([
@@ -174,18 +186,23 @@ fn pdf_to_images(pdf_path: &Path) -> Result<Vec<String>, String> {
             &prefix,
         ])
         .output()
-        .map_err(|e| format!("Failed to run pdftoppm (install: brew install poppler): {e}"))?;
+        .map_err(|e| {
+            let _ = std::fs::remove_dir_all(&dir);
+            format!("Failed to run pdftoppm (install: brew install poppler): {e}")
+        })?;
 
     if !cmd.status.success() {
+        let _ = std::fs::remove_dir_all(&dir);
         return Err(String::from_utf8_lossy(&cmd.stderr).to_string());
     }
 
     let mut images = Vec::new();
-    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with(&stem) && name.ends_with(".png") {
-            images.push(entry.path().to_string_lossy().to_string());
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("page") && name.ends_with(".png") {
+                images.push(entry.path().to_string_lossy().to_string());
+            }
         }
     }
     images.sort();
@@ -254,7 +271,7 @@ fn html_escape(s: &str) -> String {
 }
 
 pub fn create_searchable_pdf(
-    _original_paths: &[String],
+    original_paths: &[String],
     ocr_text: &str,
     output_path: &str,
 ) -> Result<(), String> {
@@ -262,85 +279,213 @@ pub fn create_searchable_pdf(
     use lopdf::{Dictionary, Document, Object, Stream};
 
     let mut doc = Document::with_version("1.7");
+    let pages_id = doc.add_object(Object::Dictionary(Dictionary::new()));
 
-    let lines: Vec<&str> = ocr_text.lines().collect();
-    let lines_per_page = 50;
-    let page_width = 595.0f32;
-    let page_height = 842.0f32;
-    let margin = 50.0f32;
+    // Shared standard font resource for OCR text layer
+    let mut font_dict = Dictionary::new();
+    font_dict.set("Type", Object::Name("Font".into()));
+    font_dict.set("Subtype", Object::Name("Type1".into()));
+    font_dict.set("BaseFont", Object::Name("Helvetica".into()));
+    let font_id = doc.add_object(Object::Dictionary(font_dict));
 
-    let pages_id = doc.add_object(Dictionary::new());
     let mut page_refs = Vec::new();
+    let lines: Vec<&str> = ocr_text.lines().collect();
 
-    let chunks: Vec<&[&str]> = if lines.is_empty() {
-        vec![&[]]
-    } else {
-        lines.chunks(lines_per_page).collect()
-    };
+    if !original_paths.is_empty() {
+        let lines_per_page = (lines.len() / original_paths.len()).max(1);
 
-    for chunk in chunks {
-        let mut operations = vec![
-            Operation::new("BT", vec![]),
-            Operation::new(
+        for (page_idx, path) in original_paths.iter().enumerate() {
+            let img = image::open(path).map_err(|e| format!("Failed to open image {path}: {e}"))?;
+            let rgb = img.to_rgb8();
+            let (width, height) = rgb.dimensions();
+            let pt_w = (width as f32 * 72.0 / 300.0).max(1.0);
+            let pt_h = (height as f32 * 72.0 / 300.0).max(1.0);
+
+            let mut jpeg_buf = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut jpeg_buf, image::ImageFormat::Jpeg)
+                .map_err(|e| format!("Failed to encode image to JPEG: {e}"))?;
+            let jpeg_bytes = jpeg_buf.into_inner();
+
+            let mut img_dict = Dictionary::new();
+            img_dict.set("Type", Object::Name("XObject".into()));
+            img_dict.set("Subtype", Object::Name("Image".into()));
+            img_dict.set("Width", Object::Integer(width as i64));
+            img_dict.set("Height", Object::Integer(height as i64));
+            img_dict.set("ColorSpace", Object::Name("DeviceRGB".into()));
+            img_dict.set("BitsPerComponent", Object::Integer(8));
+            img_dict.set("Filter", Object::Name("DCTDecode".into()));
+
+            let img_stream = Stream::new(img_dict, jpeg_bytes);
+            let img_id = doc.add_object(Object::Stream(img_stream));
+
+            let mut operations = Vec::new();
+            operations.push(Operation::new("q", vec![]));
+            operations.push(Operation::new(
+                "cm",
+                vec![
+                    Object::Real(pt_w),
+                    Object::Real(0.0),
+                    Object::Real(0.0),
+                    Object::Real(pt_h),
+                    Object::Real(0.0),
+                    Object::Real(0.0),
+                ],
+            ));
+            operations.push(Operation::new("Do", vec![Object::Name("Im1".into())]));
+            operations.push(Operation::new("Q", vec![]));
+
+            // Overlay invisible selectable text (rendering mode 3 Tr)
+            operations.push(Operation::new("BT", vec![]));
+            operations.push(Operation::new(
                 "Tf",
-                vec![Object::Name("Helvetica".into()), Object::Real(11.0)],
-            ),
-        ];
+                vec![Object::Name("F1".into()), Object::Real(10.0)],
+            ));
+            operations.push(Operation::new("Tr", vec![Object::Integer(3)]));
 
-        let mut y = page_height - margin;
+            let start_line = page_idx * lines_per_page;
+            let end_line = if page_idx == original_paths.len() - 1 {
+                lines.len()
+            } else {
+                (start_line + lines_per_page).min(lines.len())
+            };
 
-        for line in chunk {
-            y -= 14.0;
-            if y < margin {
-                break;
+            let mut y = pt_h - 20.0;
+            for line_idx in start_line..end_line {
+                if y < 20.0 {
+                    break;
+                }
+                operations.push(Operation::new(
+                    "Td",
+                    vec![Object::Real(20.0), Object::Real(y)],
+                ));
+                operations.push(Operation::new(
+                    "Tj",
+                    vec![Object::String(
+                        lines[line_idx].as_bytes().to_vec(),
+                        lopdf::StringFormat::Literal,
+                    )],
+                ));
+                y -= 12.0;
             }
+            operations.push(Operation::new("ET", vec![]));
 
-            operations.push(Operation::new(
-                "Td",
-                vec![Object::Real(margin), Object::Real(y)],
-            ));
-            operations.push(Operation::new(
-                "Tj",
-                vec![Object::String(
-                    line.as_bytes().to_vec(),
-                    lopdf::StringFormat::Literal,
-                )],
-            ));
+            let content = Content { operations };
+            let content_bytes = content.encode().map_err(|e| e.to_string())?;
+            let content_id = doc.add_object(Object::Stream(Stream::new(
+                Dictionary::new(),
+                content_bytes,
+            )));
+
+            let mut xobject_dict = Dictionary::new();
+            xobject_dict.set("Im1", Object::Reference(img_id));
+
+            let mut font_res = Dictionary::new();
+            font_res.set("F1", Object::Reference(font_id));
+
+            let mut resources = Dictionary::new();
+            resources.set("XObject", Object::Dictionary(xobject_dict));
+            resources.set("Font", Object::Dictionary(font_res));
+
+            let mut page_dict = Dictionary::new();
+            page_dict.set("Type", Object::Name("Page".into()));
+            page_dict.set("Parent", Object::Reference(pages_id));
+            page_dict.set(
+                "MediaBox",
+                Object::Array(vec![
+                    Object::Real(0.0),
+                    Object::Real(0.0),
+                    Object::Real(pt_w),
+                    Object::Real(pt_h),
+                ]),
+            );
+            page_dict.set("Resources", Object::Dictionary(resources));
+            page_dict.set("Contents", Object::Reference(content_id));
+
+            let page_id = doc.add_object(Object::Dictionary(page_dict));
+            page_refs.push(Object::Reference(page_id));
         }
+    } else {
+        // Fallback when no original image paths provided
+        let page_width = 595.0f32;
+        let page_height = 842.0f32;
+        let margin = 50.0f32;
+        let lines_per_page = 50;
 
-        operations.push(Operation::new("ET", vec![]));
+        let chunks: Vec<&[&str]> = if lines.is_empty() {
+            vec![&[]]
+        } else {
+            lines.chunks(lines_per_page).collect()
+        };
 
-        let content = Content { operations };
-        let content_bytes = content.encode().map_err(|e| e.to_string())?;
+        for chunk in chunks {
+            let mut operations = vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec![Object::Name("F1".into()), Object::Real(11.0)]),
+            ];
 
-        let mut stream = Stream::new(Dictionary::new(), content_bytes);
-        stream.dict.set("Type", Object::Name("Content".into()));
-        let content_id = doc.add_object(stream);
+            let mut y = page_height - margin;
+            for line in chunk {
+                y -= 14.0;
+                if y < margin {
+                    break;
+                }
+                operations.push(Operation::new(
+                    "Td",
+                    vec![Object::Real(margin), Object::Real(y)],
+                ));
+                operations.push(Operation::new(
+                    "Tj",
+                    vec![Object::String(
+                        line.as_bytes().to_vec(),
+                        lopdf::StringFormat::Literal,
+                    )],
+                ));
+            }
+            operations.push(Operation::new("ET", vec![]));
 
-        let mut page_dict = Dictionary::new();
-        page_dict.set("Type", Object::Name("Page".into()));
-        page_dict.set(
-            "MediaBox",
-            Object::Array(vec![
-                Object::Real(0.0),
-                Object::Real(0.0),
-                Object::Real(page_width),
-                Object::Real(page_height),
-            ]),
-        );
-        page_dict.set("Contents", Object::Reference(content_id));
+            let content = Content { operations };
+            let content_bytes = content.encode().map_err(|e| e.to_string())?;
+            let content_id = doc.add_object(Object::Stream(Stream::new(
+                Dictionary::new(),
+                content_bytes,
+            )));
 
-        let page_id = doc.add_object(Object::Dictionary(page_dict));
-        page_refs.push(Object::Reference(page_id));
+            let mut font_res = Dictionary::new();
+            font_res.set("F1", Object::Reference(font_id));
+            let mut resources = Dictionary::new();
+            resources.set("Font", Object::Dictionary(font_res));
+
+            let mut page_dict = Dictionary::new();
+            page_dict.set("Type", Object::Name("Page".into()));
+            page_dict.set("Parent", Object::Reference(pages_id));
+            page_dict.set(
+                "MediaBox",
+                Object::Array(vec![
+                    Object::Real(0.0),
+                    Object::Real(0.0),
+                    Object::Real(page_width),
+                    Object::Real(page_height),
+                ]),
+            );
+            page_dict.set("Resources", Object::Dictionary(resources));
+            page_dict.set("Contents", Object::Reference(content_id));
+
+            let page_id = doc.add_object(Object::Dictionary(page_dict));
+            page_refs.push(Object::Reference(page_id));
+        }
     }
 
-    if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&pages_id) {
-        dict.set("Type", Object::Name("Pages".into()));
-        dict.set("Count", Object::Integer(page_refs.len() as i64));
-        dict.set("Kids", Object::Array(page_refs));
-    }
+    let mut pages_dict = Dictionary::new();
+    pages_dict.set("Type", Object::Name("Pages".into()));
+    pages_dict.set("Count", Object::Integer(page_refs.len() as i64));
+    pages_dict.set("Kids", Object::Array(page_refs));
+    doc.objects.insert(pages_id, Object::Dictionary(pages_dict));
 
-    doc.trailer.set("Root", Object::Reference(pages_id));
+    let mut catalog_dict = Dictionary::new();
+    catalog_dict.set("Type", Object::Name("Catalog".into()));
+    catalog_dict.set("Pages", Object::Reference(pages_id));
+    let catalog_id = doc.add_object(Object::Dictionary(catalog_dict));
+    doc.trailer.set("Root", Object::Reference(catalog_id));
 
     let mut buf = Vec::new();
     doc.save_to(&mut buf).map_err(|e| e.to_string())?;

@@ -10,10 +10,21 @@ pub fn pdf_to_images(
     format: &str,
     dpi: u32,
 ) -> Result<Vec<String>, String> {
-    let tmp = std::env::temp_dir().join("docforge_pdf2img");
+    let unique = format!(
+        "docforge_pdf2img_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let tmp = std::env::temp_dir().join(unique);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let input = tmp.join("input.pdf");
-    std::fs::write(&input, data).map_err(|e| e.to_string())?;
+    std::fs::write(&input, data).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&tmp);
+        e.to_string()
+    })?;
 
     let mut cmd = std::process::Command::new("pdftoppm");
     cmd.arg("-r").arg(dpi.to_string());
@@ -24,21 +35,30 @@ pub fn pdf_to_images(
     }
     cmd.arg(&input).arg(tmp.join("page"));
 
-    let output = cmd.output().map_err(|e| format!("pdftoppm failed: {e}"))?;
+    let output = cmd.output().map_err(|e| {
+        let _ = std::fs::remove_dir_all(&tmp);
+        format!("pdftoppm failed: {e}")
+    })?;
     if !output.status.success() {
+        let _ = std::fs::remove_dir_all(&tmp);
         return Err(String::from_utf8_lossy(&output.stderr).to_string());
     }
 
     // Move files to output_dir
-    std::fs::create_dir_all(output_dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(output_dir).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&tmp);
+        e.to_string()
+    })?;
     let mut result = Vec::new();
-    for entry in std::fs::read_dir(&tmp).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with("page") && (name.ends_with(".jpg") || name.ends_with(".png")) {
-            let dest = std::path::Path::new(output_dir).join(&name);
-            std::fs::copy(entry.path(), &dest).map_err(|e| e.to_string())?;
-            result.push(dest.to_string_lossy().to_string());
+    if let Ok(entries) = std::fs::read_dir(&tmp) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("page") && (name.ends_with(".jpg") || name.ends_with(".png")) {
+                let dest = std::path::Path::new(output_dir).join(&name);
+                if std::fs::copy(entry.path(), &dest).is_ok() {
+                    result.push(dest.to_string_lossy().to_string());
+                }
+            }
         }
     }
     let _ = std::fs::remove_dir_all(&tmp);
@@ -59,7 +79,11 @@ pub fn images_to_pdf(image_paths: &[String], output_path: &str) -> Result<(), St
         let img = image::load_from_memory(&img_data).map_err(|e| e.to_string())?;
         let rgb = img.to_rgb8();
         let (width, height) = rgb.dimensions();
-        let img_bytes = rgb.into_raw();
+
+        let mut jpeg_buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut jpeg_buf, image::ImageFormat::Jpeg)
+            .map_err(|e| format!("Failed to encode image to JPEG: {e}"))?;
+        let jpeg_bytes = jpeg_buf.into_inner();
 
         // Create image XObject
         let mut img_dict = Dictionary::new();
@@ -71,25 +95,38 @@ pub fn images_to_pdf(image_paths: &[String], output_path: &str) -> Result<(), St
         img_dict.set("BitsPerComponent", Object::Integer(8));
         img_dict.set("Filter", Object::Name("DCTDecode".into()));
 
-        let img_stream = Stream::new(Dictionary::new(), img_bytes);
+        let img_stream = Stream::new(img_dict, jpeg_bytes);
         let img_id = doc.add_object(Object::Stream(img_stream));
 
-        // Create page
-        let w = width as f64 * 72.0 / 96.0;
-        let h = height as f64 * 72.0 / 96.0;
+        let pt_w = (width as f32 * 72.0 / 96.0).max(1.0);
+        let pt_h = (height as f32 * 72.0 / 96.0).max(1.0);
 
+        let mut xobj_dict = Dictionary::new();
+        xobj_dict.set("Im1", Object::Reference(img_id));
+        let mut res_dict = Dictionary::new();
+        res_dict.set("XObject", Object::Dictionary(xobj_dict));
+
+        let content_stream = format!("q {pt_w:.2} 0 0 {pt_h:.2} 0 0 cm /Im1 Do Q");
+        let content_id = doc.add_object(Object::Stream(Stream::new(
+            Dictionary::new(),
+            content_stream.into_bytes(),
+        )));
+
+        // Create page
         let mut page_dict = Dictionary::new();
         page_dict.set("Type", Object::Name("Page".into()));
+        page_dict.set("Parent", Object::Reference(pages_id));
         page_dict.set(
             "MediaBox",
             Object::Array(vec![
                 Object::Real(0.0),
                 Object::Real(0.0),
-                Object::Real(w as f32),
-                Object::Real(h as f32),
+                Object::Real(pt_w),
+                Object::Real(pt_h),
             ]),
         );
-        page_dict.set("Contents", Object::Reference(img_id));
+        page_dict.set("Resources", Object::Dictionary(res_dict));
+        page_dict.set("Contents", Object::Reference(content_id));
 
         let page_id = doc.add_object(Object::Dictionary(page_dict));
         kids.push(Object::Reference(page_id));
@@ -102,7 +139,11 @@ pub fn images_to_pdf(image_paths: &[String], output_path: &str) -> Result<(), St
     pages_dict.set("Count", Object::Integer(image_paths.len() as i64));
     doc.objects.insert(pages_id, Object::Dictionary(pages_dict));
 
-    doc.trailer.set("Root", Object::Reference(pages_id));
+    let mut catalog_dict = Dictionary::new();
+    catalog_dict.set("Type", Object::Name("Catalog".into()));
+    catalog_dict.set("Pages", Object::Reference(pages_id));
+    let catalog_id = doc.add_object(Object::Dictionary(catalog_dict));
+    doc.trailer.set("Root", Object::Reference(catalog_id));
 
     let mut buf = Vec::new();
     doc.save_to(&mut buf).map_err(|e| e.to_string())?;

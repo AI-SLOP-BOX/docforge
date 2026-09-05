@@ -19,25 +19,45 @@ pub fn redact_area(
     }
 
     let (r, g, b) = parse_hex_color(color, (0.0, 0.0, 0.0));
+    let page_id = page_ids[page_index];
 
-    let operations = vec![
-        lopdf::content::Operation::new("q", vec![]),
-        lopdf::content::Operation::new(
-            "rg",
-            vec![Object::Real(r), Object::Real(g), Object::Real(b)],
-        ),
-        lopdf::content::Operation::new(
-            "re",
-            vec![
-                Object::Real(x as f32),
-                Object::Real(y as f32),
-                Object::Real(width as f32),
-                Object::Real(height as f32),
-            ],
-        ),
-        lopdf::content::Operation::new("f", vec![]),
-        lopdf::content::Operation::new("Q", vec![]),
-    ];
+    // Decode existing page content if present, so we preserve existing page content
+    let mut operations = Vec::new();
+    let mut content_ids: Vec<OID> = Vec::new();
+    if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
+        if let Ok(contents_obj) = dict.get(b"Contents") {
+            content_ids = match contents_obj {
+                Object::Reference(id) => vec![*id],
+                Object::Array(arr) => arr.iter().filter_map(|o| o.as_reference().ok()).collect(),
+                _ => vec![],
+            };
+            for cid in &content_ids {
+                if let Some(Object::Stream(ref stream)) = doc.objects.get(cid) {
+                    if let Ok(c) = lopdf::content::Content::decode(&stream.content) {
+                        operations.extend(c.operations);
+                    }
+                }
+            }
+        }
+    }
+
+    // Append redaction box operations
+    operations.push(lopdf::content::Operation::new("q", vec![]));
+    operations.push(lopdf::content::Operation::new(
+        "rg",
+        vec![Object::Real(r), Object::Real(g), Object::Real(b)],
+    ));
+    operations.push(lopdf::content::Operation::new(
+        "re",
+        vec![
+            Object::Real(x as f32),
+            Object::Real(y as f32),
+            Object::Real(width as f32),
+            Object::Real(height as f32),
+        ],
+    ));
+    operations.push(lopdf::content::Operation::new("f", vec![]));
+    operations.push(lopdf::content::Operation::new("Q", vec![]));
 
     let content = lopdf::content::Content { operations };
     let content_bytes = content.encode().map_err(|e| format!("Encode error: {e}"))?;
@@ -46,9 +66,15 @@ pub fn redact_area(
     stream.dict.set("Type", Object::Name("Content".into()));
     let content_id = doc.add_object(stream);
 
-    let page_id = page_ids[page_index];
     if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
         dict.set("Contents", Object::Reference(content_id));
+    }
+
+    // Clean up old unreferenced content objects
+    for cid in content_ids {
+        if cid != content_id {
+            doc.objects.remove(&cid);
+        }
     }
 
     save_doc(&mut doc)
@@ -120,18 +146,27 @@ pub fn deep_redact(
     let page_id = page_ids[page_index];
 
     // Step 1: Get existing content stream and remove text in redacted area
-    let content_id = if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
-        dict.get(b"Contents")
-            .ok()
-            .and_then(|o| o.as_reference().ok())
-    } else {
-        None
-    };
+    let mut content_ids: Vec<OID> = Vec::new();
+    if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
+        if let Ok(contents_obj) = dict.get(b"Contents") {
+            match contents_obj {
+                Object::Reference(id) => content_ids.push(*id),
+                Object::Array(arr) => {
+                    for o in arr {
+                        if let Ok(id) = o.as_reference() {
+                            content_ids.push(id);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 
     let mut new_operations = Vec::new();
 
-    if let Some(content_id) = content_id {
-        if let Some(Object::Stream(stream)) = doc.objects.get(&content_id) {
+    for cid in &content_ids {
+        if let Some(Object::Stream(stream)) = doc.objects.get(cid) {
             if let Ok(content) = lopdf::content::Content::decode(&stream.content) {
                 let mut current_x = 0.0f32;
                 let mut current_y = 0.0f32;
@@ -293,16 +328,15 @@ pub fn deep_redact(
         dict.set("Annots", Object::Array(annots_to_keep));
     }
 
-    // Step 4: Remove metadata that might contain sensitive info
-    doc.trailer.remove(b"Info");
-
-    // Step 5: Remove any embedded files
-    if let Ok(root_id) = doc.trailer.get(b"Root").and_then(|o| o.as_reference()) {
-        if let Some(Object::Dictionary(ref mut root_dict)) = doc.objects.get_mut(&root_id) {
-            root_dict.remove(b"Names");
-            root_dict.remove(b"Outlines");
+    // Clean up old unreferenced content stream objects
+    for cid in content_ids {
+        if cid != new_content_id {
+            doc.objects.remove(&cid);
         }
     }
+
+    // Prune unreferenced objects across the document
+    doc.prune_objects();
 
     save_doc(&mut doc)
 }
@@ -317,27 +351,36 @@ pub fn redact_text_deep(data: &[u8], search_text: &str, color: &str) -> Result<V
     let page_ids = get_page_ids(&doc).clone();
 
     for &page_id in &page_ids {
-        // Get content stream
-        let content_id = if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
-            dict.get(b"Contents")
-                .ok()
-                .and_then(|o| o.as_reference().ok())
-        } else {
-            None
-        };
+        // Get all content stream IDs
+        let mut content_ids: Vec<OID> = Vec::new();
+        if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
+            if let Ok(contents_obj) = dict.get(b"Contents") {
+                match contents_obj {
+                    Object::Reference(id) => content_ids.push(*id),
+                    Object::Array(arr) => {
+                        for o in arr {
+                            if let Ok(id) = o.as_reference() {
+                                content_ids.push(id);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
 
-        let content_id = match content_id {
-            Some(id) => id,
-            None => continue,
-        };
-
-        let operations = if let Some(Object::Stream(stream)) = doc.objects.get(&content_id) {
-            lopdf::content::Content::decode(&stream.content)
-                .map(|c| c.operations)
-                .unwrap_or_default()
-        } else {
+        if content_ids.is_empty() {
             continue;
-        };
+        }
+
+        let mut operations = Vec::new();
+        for cid in &content_ids {
+            if let Some(Object::Stream(stream)) = doc.objects.get(cid) {
+                if let Ok(c) = lopdf::content::Content::decode(&stream.content) {
+                    operations.extend(c.operations);
+                }
+            }
+        }
 
         let mut new_operations = Vec::new();
         let mut in_text = false;
@@ -419,7 +462,17 @@ pub fn redact_text_deep(data: &[u8], search_text: &str, color: &str) -> Result<V
         if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
             dict.set("Contents", Object::Reference(new_content_id));
         }
+
+        // Clean up old unreferenced content stream objects so text is physically eradicated
+        for cid in content_ids {
+            if cid != new_content_id {
+                doc.objects.remove(&cid);
+            }
+        }
     }
+
+    // Prune any unreferenced objects across the document
+    doc.prune_objects();
 
     save_doc(&mut doc)
 }
