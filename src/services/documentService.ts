@@ -127,6 +127,13 @@ export class DocumentService {
   }
 
   /**
+   * Update active session with newly transformed PDF bytes while recording an Undo FullSnapshot.
+   */
+  static async updateSessionBytes(docId: string, description: string, data: number[]): Promise<void> {
+    return invoke<void>('session_update_bytes', { docId, description, data })
+  }
+
+  /**
    * Get undo/redo availability and metrics for active session.
    */
   static async getHistoryStatus(docId: string): Promise<{

@@ -195,6 +195,7 @@ export default function PDFViewer({
     }
 
     const currentToken = ++renderSeq.current
+    const abortController = new AbortController()
     setLoading(true)
 
     const timer = setTimeout(async () => {
@@ -212,6 +213,7 @@ export default function PDFViewer({
             showK: sepPlates.k,
             highlightTac: sepPlates.tac,
             tacLimit,
+            signal: abortController.signal,
           })
         } else {
           url = await defaultRenderer.renderPageToUrl({
@@ -219,10 +221,11 @@ export default function PDFViewer({
             pdfData: docId ? undefined : (pdfData || undefined),
             pageIndex: currentPage,
             dpi: targetDpi,
+            signal: abortController.signal,
           })
         }
 
-        if (currentToken !== renderSeq.current) {
+        if (currentToken !== renderSeq.current || abortController.signal.aborted) {
           URL.revokeObjectURL(url)
           return
         }
@@ -238,19 +241,22 @@ export default function PDFViewer({
         }
         pageCache.current.set(cacheKey, url)
         setPageImage(url)
-      } catch (err) {
-        if (currentToken === renderSeq.current) {
+      } catch (err: any) {
+        if (currentToken === renderSeq.current && err?.message !== 'Render cancelled') {
           console.error('Failed to render page:', err)
           setPageImage(null)
         }
       } finally {
-        if (currentToken === renderSeq.current) {
+        if (currentToken === renderSeq.current && !abortController.signal.aborted) {
           setLoading(false)
         }
       }
     }, zoom !== 1.0 ? 80 : 0)
 
-    return () => clearTimeout(timer)
+    return () => {
+      clearTimeout(timer)
+      abortController.abort()
+    }
   }, [docId, pdfData, revision, currentPage, pageCount, targetDpi, sepPlates, tacLimit])
 
   // Update image rendered dimensions
@@ -589,5 +595,3 @@ export default function PDFViewer({
     </div>
   )
 }
-
-

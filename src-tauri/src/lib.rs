@@ -557,6 +557,7 @@ pub fn run() {
             session_delete_page,
             session_undo,
             session_redo,
+            session_update_bytes,
             session_get_history_status,
             session_get_page_count,
             session_get_page_dimensions,

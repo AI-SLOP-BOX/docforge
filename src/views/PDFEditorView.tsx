@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import PDFViewer, { InteractiveMode, TextBlock } from '../components/PDFViewer'
@@ -33,6 +33,9 @@ export default function PDFEditorView() {
   const { toast, toastType, showToast, showError, showSuccess } = useToast(2800)
 
   const [docId, setDocId] = useState<string | null>(null)
+  const docIdRef = useRef<string | null>(null)
+  docIdRef.current = docId
+
   const [revision, setRevision] = useState(0)
   const [sessionCanUndo, setSessionCanUndo] = useState(false)
   const [sessionCanRedo, setSessionCanRedo] = useState(false)
@@ -54,14 +57,14 @@ export default function PDFEditorView() {
     }
   }, [])
 
-  // Cleanup session on unmount
+  // Cleanup session ONLY when component truly unmounts
   useEffect(() => {
     return () => {
-      if (docId) {
-        DocumentService.closeSession(docId).catch(() => {})
+      if (docIdRef.current) {
+        DocumentService.closeSession(docIdRef.current).catch(() => {})
       }
     }
-  }, [docId])
+  }, [])
 
   // Interactive canvas state
   const [interactiveMode, setInteractiveMode] = useState<InteractiveMode>('view')
@@ -103,8 +106,8 @@ export default function PDFEditorView() {
       if (!res) return
 
       // If previous session exists, close it
-      if (docId) {
-        await DocumentService.closeSession(docId).catch(() => {})
+      if (docIdRef.current) {
+        await DocumentService.closeSession(docIdRef.current).catch(() => {})
       }
 
       // Initialize DocumentSession in Rust backend with per-doc lock
@@ -120,7 +123,7 @@ export default function PDFEditorView() {
     } catch (err) {
       showError(formatError(err, 'PDFの読み込みに失敗しました'))
     }
-  }, [docId, pushHistory, refreshHistoryStatus, setPdfData, showError, showSuccess])
+  }, [pushHistory, refreshHistoryStatus, setPdfData, showError, showSuccess])
 
   const handleSave = useCallback(async () => {
     if (!docId && !pdfData) return
@@ -219,16 +222,15 @@ export default function PDFEditorView() {
         }
       }
 
-      // For standard command tools, run and sync session
+      // For standard command tools, run against current session bytes and update session in-place
       const currentBytes = docId ? await DocumentService.getSessionBytes(docId) : (pdfData as number[])
       const result = await invoke<number[]>(cmd, { data: currentBytes, ...args })
 
       if (docId) {
-        await DocumentService.closeSession(docId).catch(() => {})
-        const newId = await DocumentService.createSession(result)
-        setDocId(newId)
+        // Update session in-place with FullSnapshot so Undo/Redo stack is preserved!
+        await DocumentService.updateSessionBytes(docId, `Command ${cmd}`, result)
         setRevision(r => r + 1)
-        await refreshHistoryStatus(newId)
+        await refreshHistoryStatus(docId)
       }
       pushHistory(result)
       showSuccess(t().completed)
@@ -282,23 +284,29 @@ export default function PDFEditorView() {
     }
   }, [pdfData, interactiveMode, redactColor, annotationColor, strokeWidth, exec, showError, showSuccess])
 
-  // Move text block handler from canvas drag
+  // Move text block handler from canvas drag with full Session sync & Undo preservation
   const handleMoveTextBlock = useCallback(async (blockId: number, newX: number, newY: number) => {
-    if (!pdfData) return
+    if (!docId && !pdfData) return
     try {
+      const currentBytes = docId ? await DocumentService.getSessionBytes(docId) : (pdfData as number[])
       const result = await invoke<number[]>('move_text_block', {
-        data: pdfData,
+        data: currentBytes,
         page_index: currentPage,
         block_id: blockId,
         new_x: newX,
         new_y: newY,
       })
+      if (docId) {
+        await DocumentService.updateSessionBytes(docId, `Move text block #${blockId}`, result)
+        setRevision(r => r + 1)
+        await refreshHistoryStatus(docId)
+      }
       pushHistory(result)
       showSuccess(t().textMoved(blockId, newX, newY))
     } catch (err) {
       showError(formatError(err, 'テキスト移動に失敗しました'))
     }
-  }, [pdfData, currentPage, pushHistory, showError, showSuccess])
+  }, [docId, pdfData, currentPage, pushHistory, refreshHistoryStatus, showError, showSuccess])
 
   // Switch interactiveMode when changing tabs (toggle to collapse if already active)
   const handleSelectTab = (tab: Tab) => {
@@ -315,9 +323,19 @@ export default function PDFEditorView() {
     }
   }
 
-  const handlePdfUpdate = (data: number[]) => {
+  // Handle PDF byte update from child components (Forms/TextEdit/Tools/Overlay) with session sync
+  const handlePdfUpdate = useCallback(async (data: number[]) => {
+    if (docId) {
+      try {
+        await DocumentService.updateSessionBytes(docId, 'Edit Document', data)
+        setRevision(r => r + 1)
+        await refreshHistoryStatus(docId)
+      } catch (err) {
+        console.error('Failed to sync updated bytes to session:', err)
+      }
+    }
     pushHistory(data)
-  }
+  }, [docId, pushHistory, refreshHistoryStatus])
 
   // Command items for ⌘K Quick Launcher
   const commandItems = useMemo(() => {

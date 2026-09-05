@@ -74,13 +74,18 @@ pub fn session_delete_page(
     let session_arc = manager.get_session(&doc_id)?;
     let mut session = session_arc.write().map_err(|e| e.to_string())?;
 
+    // 1. Take snapshot before modification
     let snapshot = session.save_to_bytes()?;
+
+    // 2. Perform deletion on document model
+    crate::pdf_engine::delete_page_in_doc(&mut session.doc, page_index)?;
+
+    // 3. Only if deletion succeeded, push undo snapshot
     session.push_undo(crate::session::EditCommand::FullSnapshot {
         description: format!("Delete page {}", page_index + 1),
         data: snapshot,
     });
 
-    crate::pdf_engine::delete_page_in_doc(&mut session.doc, page_index)?;
     Ok(())
 }
 
@@ -102,6 +107,32 @@ pub fn session_redo(
     let session_arc = manager.get_session(&doc_id)?;
     let mut session = session_arc.write().map_err(|e| e.to_string())?;
     session.redo()
+}
+
+#[tauri::command]
+pub fn session_update_bytes(
+    doc_id: String,
+    description: String,
+    data: Vec<u8>,
+    manager: tauri::State<'_, crate::session::SessionManager>,
+) -> Result<(), String> {
+    let session_arc = manager.get_session(&doc_id)?;
+    let mut session = session_arc.write().map_err(|e| e.to_string())?;
+
+    // 1. Take snapshot of current state before applying new bytes
+    let snapshot = session.save_to_bytes()?;
+
+    // 2. Parse new document
+    let new_doc = lopdf::Document::load_mem(&data).map_err(|e| format!("Failed to parse updated PDF: {e}"))?;
+
+    // 3. Push undo snapshot and update doc in place
+    session.push_undo(crate::session::EditCommand::FullSnapshot {
+        description,
+        data: snapshot,
+    });
+    session.doc = new_doc;
+    session.invalidate_cache();
+    Ok(())
 }
 
 #[tauri::command]
