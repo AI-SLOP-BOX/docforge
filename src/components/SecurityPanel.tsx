@@ -13,6 +13,7 @@ export interface SignatureInfo {
   certificate_issuer?: string
   revocation_check?: string
   integrity_verified?: boolean
+  notice?: string
 }
 
 export function SecurityPanel({

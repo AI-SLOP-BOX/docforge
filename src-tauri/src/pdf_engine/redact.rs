@@ -80,14 +80,12 @@ pub fn redact_area(
     save_doc(&mut doc)
 }
 
-pub fn redact_text(data: &[u8], search_text: &str, _replacement: &str) -> Result<Vec<u8>, String> {
+pub fn redact_text(data: &[u8], search_text: &str, replacement: &str) -> Result<Vec<u8>, String> {
     let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc).clone();
 
-    // Collect references first to avoid borrow issues
+    // 1. Modify existing annotations containing the search text
     let mut refs_to_modify: Vec<OID> = Vec::new();
-    let mut replacement_text = String::new();
-
     for &page_id in &page_ids {
         if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
             if let Ok(Object::Array(annots)) = dict.get(b"Annots") {
@@ -98,7 +96,6 @@ pub fn redact_text(data: &[u8], search_text: &str, _replacement: &str) -> Result
                                 let content_str = String::from_utf8_lossy(bytes);
                                 if content_str.contains(search_text) {
                                     refs_to_modify.push(*ref_id);
-                                    replacement_text = _replacement.to_string();
                                 }
                             }
                         }
@@ -108,19 +105,124 @@ pub fn redact_text(data: &[u8], search_text: &str, _replacement: &str) -> Result
         }
     }
 
-    // Now modify the collected references
     for ref_id in refs_to_modify {
         if let Some(Object::Dictionary(ref mut annot_dict)) = doc.objects.get_mut(&ref_id) {
-            annot_dict.set(
-                "Contents",
-                Object::String(
-                    replacement_text.as_bytes().to_vec(),
-                    lopdf::StringFormat::Literal,
-                ),
-            );
+            if let Ok(Object::String(bytes, _)) = annot_dict.get(b"Contents") {
+                let content_str = String::from_utf8_lossy(bytes);
+                let updated = content_str.replace(search_text, replacement);
+                annot_dict.set(
+                    "Contents",
+                    Object::String(updated.into_bytes(), lopdf::StringFormat::Literal),
+                );
+            }
         }
     }
 
+    // 2. Modify page content streams to replace the target text in body content
+    for &page_id in &page_ids {
+        let mut content_ids: Vec<OID> = Vec::new();
+        if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
+            if let Ok(contents_obj) = dict.get(b"Contents") {
+                match contents_obj {
+                    Object::Reference(id) => content_ids.push(*id),
+                    Object::Array(arr) => {
+                        for o in arr {
+                            if let Ok(id) = o.as_reference() {
+                                content_ids.push(id);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if content_ids.is_empty() {
+            continue;
+        }
+
+        let mut operations = Vec::new();
+        for cid in &content_ids {
+            if let Some(Object::Stream(stream)) = doc.objects.get(cid) {
+                if let Ok(c) = lopdf::content::Content::decode(&stream.content) {
+                    operations.extend(c.operations);
+                }
+            }
+        }
+
+        let mut new_operations = Vec::new();
+        let mut modified = false;
+
+        for mut op in operations {
+            match op.operator.as_str() {
+                "Tj" => {
+                    if let Some(Object::String(bytes, _)) = op.operands.first() {
+                        let text = String::from_utf8_lossy(bytes);
+                        if text.contains(search_text) {
+                            let replaced = text.replace(search_text, replacement);
+                            op.operands[0] = Object::String(
+                                replaced.into_bytes(),
+                                lopdf::StringFormat::Literal,
+                            );
+                            modified = true;
+                        }
+                    }
+                    new_operations.push(op);
+                }
+                "TJ" => {
+                    if let Some(Object::Array(ref mut arr)) = op.operands.first_mut() {
+                        let mut has_match = false;
+                        for item in arr.iter() {
+                            if let Object::String(bytes, _) = item {
+                                if String::from_utf8_lossy(bytes).contains(search_text) {
+                                    has_match = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if has_match {
+                            for item in arr.iter_mut() {
+                                if let Object::String(bytes, _) = item {
+                                    let text = String::from_utf8_lossy(bytes);
+                                    if text.contains(search_text) {
+                                        let replaced = text.replace(search_text, replacement);
+                                        *item = Object::String(
+                                            replaced.into_bytes(),
+                                            lopdf::StringFormat::Literal,
+                                        );
+                                    }
+                                }
+                            }
+                            modified = true;
+                        }
+                    }
+                    new_operations.push(op);
+                }
+                _ => new_operations.push(op),
+            }
+        }
+
+        if modified {
+            let content = lopdf::content::Content {
+                operations: new_operations,
+            };
+            if let Ok(content_bytes) = content.encode() {
+                let mut stream = Stream::new(Dictionary::new(), content_bytes);
+                stream.dict.set("Type", Object::Name("Content".into()));
+                let new_content_id = doc.add_object(stream);
+                if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
+                    dict.set("Contents", Object::Reference(new_content_id));
+                }
+                for cid in content_ids {
+                    if cid != new_content_id {
+                        doc.objects.remove(&cid);
+                    }
+                }
+            }
+        }
+    }
+
+    doc.prune_objects();
     save_doc(&mut doc)
 }
 

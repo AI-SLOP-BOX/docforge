@@ -35,7 +35,7 @@ pub fn ocr_files(paths: &[String], language: &str) -> Result<OCRResult, String> 
     for path in paths {
         let path = Path::new(path);
         if path.extension().map(|e| e.to_string_lossy().to_lowercase()) == Some("pdf".into()) {
-            let images = pdf_to_images(path)?;
+            let (temp_dir, images) = pdf_to_images(path)?;
             for img_path in &images {
                 let (text, conf, suspects) = run_tesseract(img_path, tess_lang)?;
                 full_text.push_str(&text);
@@ -43,9 +43,8 @@ pub fn ocr_files(paths: &[String], language: &str) -> Result<OCRResult, String> 
                 page_count += 1;
                 all_suspects.extend(suspects);
             }
-            for img_path in &images {
-                let _ = std::fs::remove_file(img_path);
-            }
+            // Purge the entire temporary directory holding page images
+            let _ = std::fs::remove_dir_all(&temp_dir);
         } else {
             let (text, conf, suspects) = run_tesseract(path.to_str().unwrap_or(""), tess_lang)?;
             full_text.push_str(&text);
@@ -161,7 +160,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static OCR_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn pdf_to_images(pdf_path: &Path) -> Result<Vec<String>, String> {
+fn pdf_to_images(pdf_path: &Path) -> Result<(std::path::PathBuf, Vec<String>), String> {
     let count = OCR_TEMP_COUNTER.fetch_add(1, Ordering::SeqCst);
     let unique_name = format!(
         "docforge_ocr_{}_{}_{}",
@@ -206,7 +205,7 @@ fn pdf_to_images(pdf_path: &Path) -> Result<Vec<String>, String> {
         }
     }
     images.sort();
-    Ok(images)
+    Ok((dir, images))
 }
 
 pub fn create_epub(text: &str, output_path: &str, title: &str) -> Result<(), String> {

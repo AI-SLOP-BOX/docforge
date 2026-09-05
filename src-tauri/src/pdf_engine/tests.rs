@@ -275,4 +275,121 @@ mod tests {
             "Page must have Resources dict"
         );
     }
+
+    #[test]
+    fn test_signature_inspection_honesty() {
+        let pdf = create_test_pdf(1);
+        let signed = add_digital_signature(
+            &pdf,
+            0,
+            100.0,
+            100.0,
+            200.0,
+            50.0,
+            "Alice Developer",
+            "Code Review Approval",
+            None,
+        )
+        .expect("Add digital signature structure");
+
+        let doc = Document::load_mem(&signed).expect("Load signed PDF");
+        let result = verify_signature_in_doc(&doc).expect("Verify signature structure");
+
+        let sigs = result["signatures"].as_array().expect("Must have signatures array");
+        assert_eq!(sigs.len(), 1);
+        let sig0 = &sigs[0];
+
+        // Verify that fields extracted match what was inserted
+        assert_eq!(sig0["signer"], "Alice Developer");
+        assert_eq!(sig0["reason"], "Code Review Approval");
+        // Verify honesty: Lopdf must NOT claim cryptographic validity or fake issuer
+        assert_eq!(sig0["status"], "unverified_structure_only");
+        assert_eq!(sig0["integrity_verified"], false);
+        assert_eq!(sig0["aatl_verified"], false);
+    }
+
+    #[test]
+    fn test_unlock_encrypted_pdf_rejection() {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.add_object(Object::Dictionary(Dictionary::new()));
+        let mut root_dict = Dictionary::new();
+        root_dict.set("Type", Object::Name("Catalog".into()));
+        root_dict.set("Pages", Object::Reference(pages_id));
+        let root_id = doc.add_object(Object::Dictionary(root_dict));
+        doc.trailer.set("Root", Object::Reference(root_id));
+
+        // Insert fake /Encrypt dictionary in trailer
+        let mut encrypt_dict = Dictionary::new();
+        encrypt_dict.set("Filter", Object::Name("Standard".into()));
+        encrypt_dict.set("V", Object::Integer(2));
+        encrypt_dict.set("R", Object::Integer(3));
+        let encrypt_id = doc.add_object(Object::Dictionary(encrypt_dict));
+        doc.trailer.set("Encrypt", Object::Reference(encrypt_id));
+
+        let mut encrypted_pdf_bytes = Vec::new();
+        doc.save_to(&mut encrypted_pdf_bytes).unwrap();
+
+        // Calling unlock_pdf MUST return an Err refusing to corrupt the PDF
+        let unlock_result = unlock_pdf(&encrypted_pdf_bytes, "secret");
+        assert!(
+            unlock_result.is_err(),
+            "unlock_pdf must reject blind trailer stripping when Encrypt dictionary is present"
+        );
+    }
+
+    #[test]
+    fn test_redact_text_replaces_stream_content() {
+        let text_to_replace = "CONFIDENTIAL-DATA";
+        let replacement = "REDACTED";
+
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.add_object(Object::Dictionary(Dictionary::new()));
+        let content = format!("BT /F1 12 Tf 50 750 Td ({text_to_replace}) Tj ET");
+        let content_id = doc.add_object(Object::Stream(lopdf::Stream::new(
+            Dictionary::new(),
+            content.into_bytes(),
+        )));
+
+        let mut page_dict = Dictionary::new();
+        page_dict.set("Type", Object::Name("Page".into()));
+        page_dict.set("Parent", Object::Reference(pages_id));
+        page_dict.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(595.0),
+                Object::Real(842.0),
+            ]),
+        );
+        page_dict.set("Contents", Object::Reference(content_id));
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+
+        let mut pages_dict = Dictionary::new();
+        pages_dict.set("Type", Object::Name("Pages".into()));
+        pages_dict.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        pages_dict.set("Count", Object::Integer(1));
+        doc.objects.insert(pages_id, Object::Dictionary(pages_dict));
+
+        let mut root_dict = Dictionary::new();
+        root_dict.set("Type", Object::Name("Catalog".into()));
+        root_dict.set("Pages", Object::Reference(pages_id));
+        let root_id = doc.add_object(Object::Dictionary(root_dict));
+        doc.trailer.set("Root", Object::Reference(root_id));
+
+        let mut pdf_data = Vec::new();
+        doc.save_to(&mut pdf_data).unwrap();
+
+        let redacted = redact_text(&pdf_data, text_to_replace, replacement)
+            .expect("redact_text should replace content in body stream");
+
+        assert!(
+            !String::from_utf8_lossy(&redacted).contains(text_to_replace),
+            "Original text must no longer be present"
+        );
+        assert!(
+            String::from_utf8_lossy(&redacted).contains(replacement),
+            "Replacement text must be present"
+        );
+    }
 }

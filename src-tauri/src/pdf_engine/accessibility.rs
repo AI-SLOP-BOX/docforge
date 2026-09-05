@@ -9,10 +9,22 @@ pub fn check_accessibility(data: &[u8]) -> Result<serde_json::Value, String> {
     let page_ids = get_page_ids(&doc);
     let mut issues = Vec::new();
 
-    // Check for tagged PDF
+    // Check for tagged PDF (both MarkInfo and StructTreeRoot are required by ISO 14289 / PDF/UA)
     let has_tags = if let Ok(root_id) = doc.trailer.get(b"Root").and_then(|o| o.as_reference()) {
         if let Some(Object::Dictionary(ref root_dict)) = doc.objects.get(&root_id) {
-            root_dict.get(b"MarkInfo").is_ok()
+            let marked = root_dict
+                .get(b"MarkInfo")
+                .and_then(|m| match m {
+                    Object::Dictionary(d) => Ok(d.get(b"Marked").ok() == Some(&Object::Boolean(true))),
+                    Object::Reference(id) => {
+                        let is_m = doc.objects.get(id).and_then(|o| o.as_dict().ok()).map(|d| d.get(b"Marked").ok() == Some(&Object::Boolean(true))).unwrap_or(false);
+                        Ok(is_m)
+                    }
+                    _ => Ok(false),
+                })
+                .unwrap_or(false);
+            let has_struct_tree = root_dict.get(b"StructTreeRoot").is_ok();
+            marked && has_struct_tree
         } else {
             false
         }
@@ -23,7 +35,7 @@ pub fn check_accessibility(data: &[u8]) -> Result<serde_json::Value, String> {
     if !has_tags {
         issues.push(serde_json::json!({
             "severity": "error",
-            "message": "PDF is not tagged (required for accessibility)"
+            "message": "PDF is not tagged (論理構造ツリー StructTreeRoot / MarkInfo が未定義です)"
         }));
     }
 
@@ -129,11 +141,15 @@ pub fn fix_accessibility_issues(
         default_lang
     };
 
-    // 1. Mark Root with MarkInfo /Marked true and Lang
+    // 1. Mark Root with Lang, Title preference, and MarkInfo ONLY if StructTreeRoot is present
     if let Some(Object::Dictionary(ref mut root_dict)) = doc.objects.get_mut(&root_id) {
-        let mut mark_info = Dictionary::new();
-        mark_info.set("Marked", Object::Boolean(true));
-        root_dict.set("MarkInfo", Object::Dictionary(mark_info));
+        // Only declare /Marked true if a StructTreeRoot actually exists
+        if root_dict.get(b"StructTreeRoot").is_ok() {
+            let mut mark_info = Dictionary::new();
+            mark_info.set("Marked", Object::Boolean(true));
+            root_dict.set("MarkInfo", Object::Dictionary(mark_info));
+        }
+
         root_dict.set(
             "Lang",
             Object::String(lang_str.as_bytes().to_vec(), lopdf::StringFormat::Literal),

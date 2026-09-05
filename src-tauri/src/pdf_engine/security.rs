@@ -42,10 +42,64 @@ pub fn add_digital_signature(
         "Reason",
         Object::String(reason.as_bytes().to_vec(), lopdf::StringFormat::Literal),
     );
+    // Timestamp format according to PDF spec: D:YYYYMMDDHHmmSSZ
+    let now = std::time::SystemTime::now();
+    let duration = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // Calculate basic UTC date components
+    let seconds_in_day = 86400;
+    let days = duration / seconds_in_day;
+    let time_of_day = duration % seconds_in_day;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
+
+    // Approximate UTC year, month, day calculation from days since 1970-01-01
+    let mut year = 1970;
+    let mut rem_days = days;
+    loop {
+        let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        let days_in_year = if leap { 366 } else { 365 };
+        if rem_days >= days_in_year {
+            rem_days -= days_in_year;
+            year += 1;
+        } else {
+            break;
+        }
+    }
+    let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    let days_in_months = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    let mut month = 1;
+    for &dim in &days_in_months {
+        if rem_days >= dim {
+            rem_days -= dim;
+            month += 1;
+        } else {
+            break;
+        }
+    }
+    let day = rem_days + 1;
+    let pdf_date = format!("D:{year:04}{month:02}{day:02}{hours:02}{minutes:02}{seconds:02}Z");
+
     sig_dict.set(
         "M",
         Object::String(
-            b"D:20260830120000+00'00'".to_vec(),
+            pdf_date.into_bytes(),
             lopdf::StringFormat::Literal,
         ),
     );
@@ -131,7 +185,7 @@ pub fn add_digital_signature(
 }
 
 pub fn verify_signature_in_doc(doc: &Document) -> Result<serde_json::Value, String> {
-    // Find signature fields
+    // Find signature fields and extract actual dictionary metadata
     let mut signatures = Vec::new();
 
     for (_, obj) in doc.objects.iter() {
@@ -149,78 +203,74 @@ pub fn verify_signature_in_doc(doc: &Document) -> Result<serde_json::Value, Stri
                         })
                         .unwrap_or_default();
 
-                    let reason = dict
-                        .get(b"Reason")
-                        .ok()
+                    // V can be a direct dictionary or an indirect reference to signature dictionary
+                    let sig_dict = match dict.get(b"V") {
+                        Ok(Object::Dictionary(d)) => Some(d),
+                        Ok(Object::Reference(id)) => doc.objects.get(id).and_then(|o| o.as_dict().ok()),
+                        _ => None,
+                    };
+
+                    let signer = sig_dict
+                        .and_then(|d| d.get(b"Name").ok())
+                        .or_else(|| dict.get(b"Name").ok())
                         .and_then(|o| match o {
-                            Object::String(bytes, _) => {
-                                Some(String::from_utf8_lossy(bytes).to_string())
-                            }
+                            Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).to_string()),
                             _ => None,
                         })
                         .unwrap_or_default();
 
-                    let signer = dict
-                        .get(b"Name")
-                        .ok()
+                    let reason = sig_dict
+                        .and_then(|d| d.get(b"Reason").ok())
+                        .or_else(|| dict.get(b"Reason").ok())
                         .and_then(|o| match o {
-                            Object::String(bytes, _) => {
-                                Some(String::from_utf8_lossy(bytes).to_string())
-                            }
+                            Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).to_string()),
                             _ => None,
                         })
                         .unwrap_or_default();
 
-                    // Check for Adobe.PPKLite and PKCS#7 format
-                    let filter = dict
-                        .get(b"Filter")
-                        .ok()
+                    let filter = sig_dict
+                        .and_then(|d| d.get(b"Filter").ok())
+                        .or_else(|| dict.get(b"Filter").ok())
                         .and_then(|o| match o {
                             Object::Name(bytes) => Some(String::from_utf8_lossy(bytes).to_string()),
                             _ => None,
                         })
                         .unwrap_or_else(|| "Adobe.PPKLite".to_string());
 
-                    let sub_filter = dict
-                        .get(b"SubFilter")
-                        .ok()
+                    let sub_filter = sig_dict
+                        .and_then(|d| d.get(b"SubFilter").ok())
+                        .or_else(|| dict.get(b"SubFilter").ok())
                         .and_then(|o| match o {
                             Object::Name(bytes) => Some(String::from_utf8_lossy(bytes).to_string()),
                             _ => None,
                         })
                         .unwrap_or_else(|| "adbe.pkcs7.detached".to_string());
 
-                    // Global Trust List (AATL/EUTL) trust chain simulation and validation:
-                    // Recognizes major global trust providers (DigiCert, GlobalSign, Seiko, Sectigo)
-                    let is_aatl = signer.contains("AATL")
-                        || signer.contains("GlobalSign")
-                        || signer.contains("DigiCert")
-                        || signer.contains("DocForge")
-                        || signer.contains("Seiko")
-                        || signer.is_empty();
-                    let cert_issuer = if signer.contains("GlobalSign") {
-                        "GlobalSign CA for AATL - R3"
-                    } else if signer.contains("DigiCert") {
-                        "DigiCert Assured ID Root CA (Verified)"
-                    } else if signer.contains("Seiko") {
-                        "Seiko Solutions Time Stamp Authority (EUTL)"
-                    } else {
-                        "Global Trust List Partner CA"
-                    };
+                    let timestamp = sig_dict
+                        .and_then(|d| d.get(b"M").ok())
+                        .or_else(|| dict.get(b"M").ok())
+                        .and_then(|o| match o {
+                            Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).to_string()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| "未指定".to_string());
 
+                    // Honest validation: Lopdf inspects structural PDF dictionaries, but does not perform
+                    // full cryptographic PKCS#7 / CMS signature verification or ByteRange digest hashing.
                     signatures.push(serde_json::json!({
-                        "name": name,
-                        "signer": if signer.is_empty() { "電子署名者 (証明書検証済)" } else { &signer },
-                        "reason": if reason.is_empty() { "文書承認および真正性の証明" } else { &reason },
-                        "status": "valid",
+                        "name": if name.is_empty() { "SignatureField" } else { &name },
+                        "signer": if signer.is_empty() { "未指定の署名者" } else { &signer },
+                        "reason": if reason.is_empty() { "未指定" } else { &reason },
+                        "status": "unverified_structure_only",
                         "filter": filter,
                         "sub_filter": sub_filter,
-                        "timestamp": "2026-08-30T12:00:00Z",
-                        "aatl_verified": is_aatl,
-                        "trust_level": if is_aatl { "公的信頼リスト検証済み (Global Trust List)" } else { "標準X.509認証" },
-                        "certificate_issuer": cert_issuer,
-                        "revocation_check": "有効 (CRL/OCSP照合完了・未失効)",
-                        "integrity_verified": true
+                        "timestamp": timestamp,
+                        "aatl_verified": false,
+                        "trust_level": "暗号署名エンジン未検証 (構造確認のみ)",
+                        "certificate_issuer": "検証未実施 (外部PKI照合が必要)",
+                        "revocation_check": "未照合",
+                        "integrity_verified": false,
+                        "notice": "PDF構造上の署名フィールドを検出しました。暗号ダイジェストおよびPKCS#7署名チェーンの完全な検証には外部PKI/CMSエンジンが必要です。"
                     }));
                 }
             }
@@ -249,69 +299,45 @@ pub struct HardwareToken {
 }
 
 pub fn detect_hardware_tokens() -> Result<Vec<HardwareToken>, String> {
-    // Stub: In production, this would use PKCS#11 library
-    // to enumerate available tokens
-    let tokens = vec![HardwareToken {
-        slot_id: 0,
-        label: "Software Token".to_string(),
-        manufacturer: "DocForge".to_string(),
-        serial: "00000000".to_string(),
-        initialized: true,
-    }];
-
-    Ok(tokens)
+    // Honest: Return empty list when no PKCS#11 hardware device/HSM is connected
+    Ok(Vec::new())
 }
 
 pub fn sign_with_hardware_token(
-    data: &[u8],
+    _data: &[u8],
     _slot_id: u32,
     _pin: &str,
-    page_index: usize,
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-    signer_name: &str,
-    reason: &str,
+    _page_index: usize,
+    _x: f64,
+    _y: f64,
+    _width: f64,
+    _height: f64,
+    _signer_name: &str,
+    _reason: &str,
 ) -> Result<Vec<u8>, String> {
-    // In production, this would:
-    // 1. Open PKCS#11 session
-    // 2. Authenticate with PIN
-    // 3. Get private key from token
-    // 4. Sign the document hash
-    // 5. Create PKCS#7 signature
-
-    // For now, use software signing
-    add_digital_signature(
-        data,
-        page_index,
-        x,
-        y,
-        width,
-        height,
-        signer_name,
-        reason,
-        None,
-    )
+    Err("ハードウェアトークン(PKCS#11)署名は現在未接続です。ハードウェアHSMまたはスマートカードリーダーを接続してください。".into())
 }
 
 pub fn verify_hardware_token_signature(
-    data: &[u8],
+    _data: &[u8],
     _slot_id: u32,
 ) -> Result<serde_json::Value, String> {
-    // Stub: In production, this would verify against the token's certificate
-    verify_signature(data, 0)
+    Err("ハードウェアトークン署名検証用PKCS#11スロットが接続されていません。".into())
 }
 
 // ===== PDF UNLOCK (PASSWORD REMOVAL) =====
 
 pub fn unlock_pdf(data: &[u8], _password: &str) -> Result<Vec<u8>, String> {
-    // lopdf doesn't support password-protected PDFs natively
-    // Try to load and remove encryption
-    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to unlock: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
-    // Remove encryption dictionary from trailer
-    doc.trailer.remove(b"Encrypt");
+    // Check if the document truly has an Encrypt dictionary
+    if doc.trailer.has(b"Encrypt") {
+        // Warning / Error: lopdf parses encrypted PDFs with encrypted strings and streams still ciphered.
+        // Merely removing the /Encrypt entry leaves raw ciphered streams and corrupts the document completely.
+        return Err(
+            "暗号化されたPDFストリームの復号にはPDF暗号化ハンドラ（標準セキュリティハンドラ・鍵導出スケジュール）の実装が必要です。暗号化辞書を強制除去するとPDFが破損するため実行を拒否しました。".into()
+        );
+    }
 
     save_doc(&mut doc)
 }

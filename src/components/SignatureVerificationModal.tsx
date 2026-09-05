@@ -37,43 +37,62 @@ export function SignatureVerificationModal({ signatures, onClose }: SignatureVer
           </p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 300, overflowY: 'auto' }}>
-            {signatures.map((sig, i) => (
-              <div key={i} style={{
-                padding: 10, borderRadius: 6, background: 'var(--bg-0)',
-                border: '1px solid rgba(0,255,100,0.3)', fontSize: 12,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#00ff88', fontWeight: 700 }}>
-                    <CheckIcon size={13} color="#00ff88" /> 有効な署名
-                  </span>
-                  <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>({sig.name || `Signature ${i + 1}`})</span>
-                </div>
-                <div style={{ color: 'var(--text)', fontSize: 12, lineHeight: 1.6 }}>
-                  <div><b>署名者:</b> {sig.signer || '署名者情報あり'}</div>
-                  <div><b>署名理由:</b> {sig.reason || '未指定'}</div>
-                  <div><b>署名日時:</b> {sig.timestamp}</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                    <b>信頼性認証:</b>
+            {signatures.map((sig, i) => {
+              const isCryptoVerified = sig.status === 'valid' && sig.integrity_verified
+              return (
+                <div key={i} style={{
+                  padding: 10, borderRadius: 6, background: 'var(--bg-0)',
+                  border: `1px solid ${isCryptoVerified ? 'rgba(0,255,100,0.3)' : 'rgba(255,180,0,0.3)'}`, fontSize: 12,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                     <span style={{
-                      fontSize: 10,
-                      padding: '1px 6px',
-                      borderRadius: 3,
-                      background: sig.aatl_verified ? 'rgba(0, 255, 136, 0.15)' : 'var(--bg-2)',
-                      color: sig.aatl_verified ? '#00ff88' : 'var(--text)',
-                      border: `1px solid ${sig.aatl_verified ? 'rgba(0, 255, 136, 0.4)' : 'var(--border)'}`,
-                      fontWeight: 600
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      color: isCryptoVerified ? '#00ff88' : '#e3b341', fontWeight: 700
                     }}>
-                      {sig.trust_level || 'AATL公的信頼済み'}
+                      <CheckIcon size={13} color={isCryptoVerified ? '#00ff88' : '#e3b341'} />
+                      {isCryptoVerified ? '検証済みの署名' : '署名フィールド検出 (暗号ダイジェスト未検証)'}
                     </span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>({sig.name || `Signature ${i + 1}`})</span>
                   </div>
-                  {sig.certificate_issuer && (
-                    <div><b>発行認証局:</b> <span style={{ color: 'var(--text-muted)' }}>{sig.certificate_issuer}</span></div>
-                  )}
-                  <div><b>失効ステータス:</b> <span style={{ color: '#00ff88' }}>{sig.revocation_check || '有効 (CRL/OCSP確認済)'}</span></div>
-                  <div><b>改ざん検知:</b> 文書の完全性は保たれています (Hash verified)</div>
+                  <div style={{ color: 'var(--text)', fontSize: 12, lineHeight: 1.6 }}>
+                    <div><b>署名者:</b> {sig.signer || '未指定'}</div>
+                    <div><b>署名理由:</b> {sig.reason || '未指定'}</div>
+                    <div><b>署名日時:</b> {sig.timestamp}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                      <b>信頼性検証:</b>
+                      <span style={{
+                        fontSize: 10,
+                        padding: '1px 6px',
+                        borderRadius: 3,
+                        background: isCryptoVerified ? 'rgba(0, 255, 136, 0.15)' : 'rgba(255, 180, 0, 0.15)',
+                        color: isCryptoVerified ? '#00ff88' : '#e3b341',
+                        border: `1px solid ${isCryptoVerified ? 'rgba(0, 255, 136, 0.4)' : 'rgba(255, 180, 0, 0.4)'}`,
+                        fontWeight: 600
+                      }}>
+                        {sig.trust_level || '構造検出'}
+                      </span>
+                    </div>
+                    {sig.certificate_issuer && (
+                      <div><b>発行認証局:</b> <span style={{ color: 'var(--text-muted)' }}>{sig.certificate_issuer}</span></div>
+                    )}
+                    {sig.notice && (
+                      <div style={{
+                        marginTop: 6,
+                        padding: '4px 8px',
+                        borderRadius: 4,
+                        background: 'rgba(255, 180, 0, 0.08)',
+                        border: '1px dashed rgba(255, 180, 0, 0.3)',
+                        fontSize: 11,
+                        color: 'var(--text-muted)',
+                        lineHeight: 1.4
+                      }}>
+                        ℹ️ {sig.notice}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
         <button

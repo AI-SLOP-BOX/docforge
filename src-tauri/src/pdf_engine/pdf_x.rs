@@ -297,9 +297,10 @@ pub fn convert_to_pdfx_standard(
     let is_x1a =
         standard.to_lowercase().contains("x-1a") || standard.to_lowercase().contains("x1a");
 
-    // If PDF/X-1a, flatten transparency first
+    // If PDF/X-1a, flatten transparency first (ISO 15930-1 strictly prohibits live transparency)
     let prepared_data = if is_x1a {
-        super::print_prod::flatten_transparency(data).unwrap_or_else(|_| data.to_vec())
+        super::print_prod::flatten_transparency(data)
+            .map_err(|e| format!("PDF/X-1a変換エラー (透明効果の統合・ラスタライズに失敗しました): {e}"))?
     } else {
         data.to_vec()
     };

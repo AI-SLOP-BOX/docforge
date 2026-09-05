@@ -103,14 +103,14 @@ export const AccessibilitySection: React.FC<AccessibilitySectionProps> = ({
                 })
                 onPdfUpdate?.(fixed)
                 setAccessReport(null)
-                showToast('アクセシビリティ自動修復完了: タグ構造/言語/タイトル/ツールチップを補正しました')
+                showToast('アクセシビリティ補正完了: 言語・タイトル・フォームツールチップを設定しました')
               } catch (err) {
                 showToast(`修復エラー: ${err}`)
               }
             }}
             style={{ width: '100%', background: 'var(--green)', color: '#fff', fontSize: 11, padding: '5px 8px' }}
           >
-            ワンクリックでアクセシビリティ自動修復
+            メタデータ・言語属性・ツールチップ補正
           </AccentBtn>
         </div>
       )}
