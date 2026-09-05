@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import { DocumentService } from '../services/documentService'
 import { SectionTitle, AccentBtn } from './UIControls'
 import { ShieldCheckIcon, SearchIcon, ZapIcon } from './Icons'
 
@@ -29,24 +30,34 @@ export interface CompareReport {
 
 interface ToolsAdvancedEngineeringSectionProps {
   pdfData: number[] | null
+  docId?: string | null
   showToast: (msg: string) => void
   onPdfUpdate?: (data: number[]) => void
 }
 
 export function ToolsAdvancedEngineeringSection({
   pdfData,
+  docId,
   showToast,
   onPdfUpdate,
 }: ToolsAdvancedEngineeringSectionProps) {
   const [busy, setBusy] = useState(false)
   const [compareReport, setCompareReport] = useState<CompareReport | null>(null)
 
+  const getCurrentBytes = useCallback(async (): Promise<number[] | null> => {
+    if (docId) {
+      return DocumentService.getSessionBytes(docId)
+    }
+    return pdfData
+  }, [docId, pdfData])
+
   const handleAutoRepair = async () => {
-    if (!pdfData || busy) return
+    const bytes = await getCurrentBytes()
+    if (!bytes || busy) return
     setBusy(true)
     try {
-      const repaired = await invoke<number[]>('repair_corrupt_pdf', { data: pdfData })
-      onPdfUpdate?.(repaired)
+      const repaired = await invoke<number[]>('repair_corrupt_pdf', { data: bytes })
+      await onPdfUpdate?.(repaired)
       showToast('破損・XRef障害の自動修復が完了しました (PDF構造再構築済)')
     } catch (err) {
       showToast(`修復エラー: ${err}`)
@@ -56,11 +67,12 @@ export function ToolsAdvancedEngineeringSection({
   }
 
   const handleScanEnhance = async (deskew: boolean, removeBleed: boolean, binarize: boolean) => {
-    if (!pdfData || busy) return
+    const bytes = await getCurrentBytes()
+    if (!bytes || busy) return
     setBusy(true)
     try {
       const enhanced = await invoke<number[]>('enhance_scanned_pdf', {
-        data: pdfData,
+        data: bytes,
         options: {
           deskew,
           remove_bleedthrough: removeBleed,
@@ -68,7 +80,7 @@ export function ToolsAdvancedEngineeringSection({
           contrast_boost: 1.3,
         }
       })
-      onPdfUpdate?.(enhanced)
+      await onPdfUpdate?.(enhanced)
       showToast('スキャン画像の美化処理完了 (傾き補正・裏写り除去適用)')
     } catch (err) {
       showToast(`スキャン美化エラー: ${err}`)
@@ -78,7 +90,8 @@ export function ToolsAdvancedEngineeringSection({
   }
 
   const handleCompareWith = async () => {
-    if (!pdfData || busy) return
+    const bytes = await getCurrentBytes()
+    if (!bytes || busy) return
     const path = await open({
       filters: [{ name: 'PDF', extensions: ['pdf'] }],
       multiple: false,
@@ -88,7 +101,7 @@ export function ToolsAdvancedEngineeringSection({
     try {
       const otherBytes = await invoke<number[]>('read_file_bytes', { path: path as string })
       const report = await invoke<CompareReport>('compare_pdf_documents', {
-        original: pdfData,
+        original: bytes,
         revised: otherBytes,
       })
       setCompareReport(report)

@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
+import { DocumentService } from '../services/documentService'
 import { SectionTitle, Input, SliderInput, ColorInput, AccentBtn } from './UIControls'
 import { RedactIcon, VectorPathIcon, CheckIcon, ZapIcon } from './Icons'
 import { AccessibilitySection, AccessibilityReport } from './ToolsAccessibilitySection'
@@ -11,6 +12,7 @@ import { ToolsBatchAndColorSection } from './ToolsBatchAndColorSection'
 export function ToolsPanel({
   exec,
   pdfData,
+  docId,
   redactColor,
   setRedactColor,
   redactSearchText,
@@ -23,6 +25,7 @@ export function ToolsPanel({
 }: {
   exec: Function
   pdfData: number[] | null
+  docId?: string | null
   redactColor: string
   setRedactColor: (v: string) => void
   redactSearchText: string
@@ -33,6 +36,13 @@ export function ToolsPanel({
   onActivateDrawRedact?: () => void
   onPdfUpdate?: (data: number[]) => void
 }) {
+  const getCurrentBytes = useCallback(async (): Promise<number[] | null> => {
+    if (docId) {
+      return DocumentService.getSessionBytes(docId)
+    }
+    return pdfData
+  }, [docId, pdfData])
+
   const [compressQuality, setCompressQuality] = useState(85)
   const [outlineBusy, setOutlineBusy] = useState(false)
   const [accessReport, setAccessReport] = useState<AccessibilityReport | null>(null)
@@ -44,7 +54,8 @@ export function ToolsPanel({
   } | null>(null)
 
   const handleSanitize = async () => {
-    if (!pdfData) return
+    const bytes = await getCurrentBytes()
+    if (!bytes) return
     try {
       const [cleanBytes, summary] = await invoke<[number[], {
         metadata_removed: boolean
@@ -52,9 +63,9 @@ export function ToolsPanel({
         attachments_removed: number
         javascript_removed: boolean
         thumbnails_purged: number
-      }]>('sanitize_document', { data: pdfData })
+      }]>('sanitize_document', { data: bytes })
 
-      onPdfUpdate?.(cleanBytes)
+      await onPdfUpdate?.(cleanBytes)
       showToast(`完全サニタイズ完了: 注釈${summary.annotations_purged}件削除, メタデータ/JS完全パージ`)
     } catch (err) {
       showToast(`サニタイズエラー: ${err}`)
@@ -62,11 +73,12 @@ export function ToolsPanel({
   }
 
   const handleConvertToOutlines = async () => {
-    if (!pdfData || outlineBusy) return
+    const bytes = await getCurrentBytes()
+    if (!bytes || outlineBusy) return
     setOutlineBusy(true)
     try {
-      const outlinedBytes = await invoke<number[]>('convert_fonts_to_outlines', { data: pdfData })
-      onPdfUpdate?.(outlinedBytes)
+      const outlinedBytes = await invoke<number[]>('convert_fonts_to_outlines', { data: bytes })
+      await onPdfUpdate?.(outlinedBytes)
       showToast('全フォントのアウトライン化完了: 印刷用ベクターパスに変換されました')
     } catch (err) {
       showToast(`アウトライン化エラー: ${err}`)
@@ -139,11 +151,13 @@ export function ToolsPanel({
       <ToolsBatchAndColorSection
         exec={exec}
         pdfData={pdfData}
+        docId={docId}
         showToast={showToast}
       />
 
       <ToolsAdvancedEngineeringSection
         pdfData={pdfData}
+        docId={docId}
         showToast={showToast}
         onPdfUpdate={onPdfUpdate}
       />
@@ -174,11 +188,12 @@ export function ToolsPanel({
 
       <SectionTitle>PDF比較</SectionTitle>
       <AccentBtn onClick={async () => {
-        if (!pdfData) return
+        const bytes = await getCurrentBytes()
+        if (!bytes) return
         const path = await open({ filters: [{ name: 'PDF', extensions: ['pdf'] }], multiple: false })
         if (path) {
-          const bytes = await invoke<number[]>('read_file_bytes', { path: path as string })
-          const result = await invoke<{pages_same: number; pages_different: number}>('compare_pdfs', { data1: pdfData, data2: bytes })
+          const otherBytes = await invoke<number[]>('read_file_bytes', { path: path as string })
+          const result = await invoke<{pages_same: number; pages_different: number}>('compare_pdfs', { data1: bytes, data2: otherBytes })
           showToast(`比較: ${result.pages_same}ページ一致, ${result.pages_different}ページ異なる`)
         }
       }}>
@@ -191,16 +206,17 @@ export function ToolsPanel({
       </div>
       <AccentBtn
         onClick={async () => {
-          if (!pdfData) return
-          const beforeBytes = pdfData.length
+          const bytes = await getCurrentBytes()
+          if (!bytes) return
+          const beforeBytes = bytes.length
           try {
-            const optimized = await invoke<number[]>('optimize_pdf', { data: pdfData })
+            const optimized = await invoke<number[]>('optimize_pdf', { data: bytes })
             const afterBytes = optimized.length
             const savedBytes = Math.max(0, beforeBytes - afterBytes)
             const percent = beforeBytes > 0 ? ((savedBytes / beforeBytes) * 100) : 0
             setOptResult({ beforeBytes, afterBytes, savedBytes, percent })
             if (onPdfUpdate) {
-              onPdfUpdate(optimized)
+              await onPdfUpdate(optimized)
             } else {
               exec('optimize_pdf', {})
             }
@@ -221,16 +237,17 @@ export function ToolsPanel({
       <SliderInput value={compressQuality} onChange={setCompressQuality} label="圧縮品質 (%)" min={10} max={100} step={5} />
       <AccentBtn
         onClick={async () => {
-          if (!pdfData) return
-          const beforeBytes = pdfData.length
+          const bytes = await getCurrentBytes()
+          if (!bytes) return
+          const beforeBytes = bytes.length
           try {
-            const compressed = await invoke<number[]>('compress_pdf_quality', { data: pdfData, quality: compressQuality })
+            const compressed = await invoke<number[]>('compress_pdf_quality', { data: bytes, quality: compressQuality })
             const afterBytes = compressed.length
             const savedBytes = Math.max(0, beforeBytes - afterBytes)
             const percent = beforeBytes > 0 ? ((savedBytes / beforeBytes) * 100) : 0
             setOptResult({ beforeBytes, afterBytes, savedBytes, percent })
             if (onPdfUpdate) {
-              onPdfUpdate(compressed)
+              await onPdfUpdate(compressed)
             } else {
               exec('compress_pdf_quality', { quality: compressQuality })
             }
@@ -307,11 +324,12 @@ export function ToolsPanel({
         PDFを様々な形式に変換
       </div>
       <AccentBtn onClick={async () => {
-        if (!pdfData) return
+        const bytes = await getCurrentBytes()
+        if (!bytes) return
         const dir = await open({ directory: true })
         if (dir) {
           try {
-            const images = await invoke<string[]>('pdf_to_images', { data: pdfData, output_dir: dir as string, format: 'png', dpi: 200 })
+            const images = await invoke<string[]>('pdf_to_images', { data: bytes, output_dir: dir as string, format: 'png', dpi: 200 })
             showToast(`${images.length}ページをPNGに変換しました`)
           } catch (err) { showToast(`エラー: ${err}`) }
         }
@@ -319,11 +337,12 @@ export function ToolsPanel({
         PDF→PNG
       </AccentBtn>
       <AccentBtn onClick={async () => {
-        if (!pdfData) return
+        const bytes = await getCurrentBytes()
+        if (!bytes) return
         const dir = await open({ directory: true })
         if (dir) {
           try {
-            const images = await invoke<string[]>('pdf_to_images', { data: pdfData, output_dir: dir as string, format: 'jpg', dpi: 200 })
+            const images = await invoke<string[]>('pdf_to_images', { data: bytes, output_dir: dir as string, format: 'jpg', dpi: 200 })
             showToast(`${images.length}ページをJPGに変換しました`)
           } catch (err) { showToast(`エラー: ${err}`) }
         }
@@ -331,11 +350,12 @@ export function ToolsPanel({
         PDF→JPG
       </AccentBtn>
       <AccentBtn onClick={async () => {
-        if (!pdfData) return
+        const bytes = await getCurrentBytes()
+        if (!bytes) return
         const path = await save({ defaultPath: 'output.txt', filters: [{ name: 'Text', extensions: ['txt'] }] })
         if (path) {
           try {
-            await invoke('pdf_to_word', { data: pdfData, output_path: path })
+            await invoke('pdf_to_word', { data: bytes, output_path: path })
             showToast('PDF→テキスト変換完了')
           } catch (err) { showToast(`エラー: ${err}`) }
         }
@@ -343,11 +363,12 @@ export function ToolsPanel({
         PDF→テキスト
       </AccentBtn>
       <AccentBtn onClick={async () => {
-        if (!pdfData) return
+        const bytes = await getCurrentBytes()
+        if (!bytes) return
         const path = await save({ defaultPath: 'output.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] })
         if (path) {
           try {
-            await invoke('pdf_to_excel', { data: pdfData, output_path: path })
+            await invoke('pdf_to_excel', { data: bytes, output_path: path })
             showToast('PDF→CSV変換完了')
           } catch (err) { showToast(`エラー: ${err}`) }
         }
@@ -395,11 +416,15 @@ export function ToolsPanel({
         PDF修復
       </AccentBtn>
       <AccentBtn onClick={async () => {
-        if (!pdfData) return
+        const bytes = await getCurrentBytes()
+        if (!bytes) return
         const password = prompt('パスワードを入力:')
         if (password) {
           try {
-            await invoke<number[]>('unlock_pdf', { data: pdfData, password })
+            const unlocked = await invoke<number[]>('unlock_pdf', { data: bytes, password })
+            if (onPdfUpdate) {
+              await onPdfUpdate(unlocked)
+            }
             showToast('PDFロック解除完了')
           } catch (err) { showToast(`エラー: ${err}`) }
         }
@@ -451,9 +476,10 @@ export function ToolsPanel({
       />
 
       <AccentBtn onClick={async () => {
-        if (!pdfData) return
+        const bytes = await getCurrentBytes()
+        if (!bytes) return
         try {
-          const result = await invoke<{needs_cmyk_conversion: boolean}>('preview_color_separations', { data: pdfData })
+          const result = await invoke<{needs_cmyk_conversion: boolean}>('preview_color_separations', { data: bytes })
           showToast(result.needs_cmyk_conversion ? 'CMYK変換推奨' : '色分解OK')
         } catch (err) { showToast(`エラー: ${err}`) }
       }}>
@@ -461,11 +487,15 @@ export function ToolsPanel({
       </AccentBtn>
 
       <AccentBtn onClick={async () => {
-        if (!pdfData) return
+        const bytes = await getCurrentBytes()
+        if (!bytes) return
         const script = prompt('JavaScriptコードを入力:', 'app.alert("Hello from PDF!");')
         if (script) {
           try {
-            await invoke<number[]>('embed_javascript', { data: pdfData, script })
+            const updated = await invoke<number[]>('embed_javascript', { data: bytes, script })
+            if (onPdfUpdate) {
+              await onPdfUpdate(updated)
+            }
             showToast('JavaScriptを埋め込みました')
           } catch (err) { showToast(`エラー: ${err}`) }
         }

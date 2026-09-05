@@ -1,5 +1,6 @@
 import React from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { DocumentService } from '../services/documentService'
 import { TextBlock, InteractiveMode } from './PDFViewer'
 
 interface PDFViewerOverlayProps {
@@ -18,6 +19,7 @@ interface PDFViewerOverlayProps {
   editingTextVal: string
   setEditingTextVal: (val: string) => void
   pdfData: number[] | null
+  docId?: string | null
   currentPage: number
   onPdfUpdate?: (data: number[]) => void
   imgRenderedSize: { width: number; height: number }
@@ -44,6 +46,7 @@ export const PDFViewerOverlay: React.FC<PDFViewerOverlayProps> = ({
   editingTextVal,
   setEditingTextVal,
   pdfData,
+  docId,
   currentPage,
   onPdfUpdate,
   imgRenderedSize,
@@ -140,10 +143,11 @@ export const PDFViewerOverlay: React.FC<PDFViewerOverlayProps> = ({
                     if (e.key === 'Enter') {
                       e.preventDefault()
                       e.stopPropagation()
-                      if (pdfData && editingTextVal !== block.text) {
+                      const currentBytes = docId ? await DocumentService.getSessionBytes(docId) : pdfData
+                      if (currentBytes && editingTextVal !== block.text) {
                         try {
                           const updated = await invoke<number[]>('edit_text_block', {
-                            data: pdfData,
+                            data: currentBytes,
                             page_index: currentPage,
                             block_id: block.id,
                             new_text: editingTextVal,
@@ -160,10 +164,11 @@ export const PDFViewerOverlay: React.FC<PDFViewerOverlayProps> = ({
                     }
                   }}
                   onBlur={async () => {
-                    if (pdfData && editingTextVal !== block.text) {
+                    const currentBytes = docId ? await DocumentService.getSessionBytes(docId) : pdfData
+                    if (currentBytes && editingTextVal !== block.text) {
                       try {
                         const updated = await invoke<number[]>('edit_text_block', {
-                          data: pdfData,
+                          data: currentBytes,
                           page_index: currentPage,
                           block_id: block.id,
                           new_text: editingTextVal,

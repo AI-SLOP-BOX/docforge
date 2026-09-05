@@ -130,9 +130,7 @@ pub fn add_digital_signature(
     save_doc(&mut doc)
 }
 
-pub fn verify_signature(data: &[u8], _signature_index: usize) -> Result<serde_json::Value, String> {
-    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
-
+pub fn verify_signature_in_doc(doc: &Document) -> Result<serde_json::Value, String> {
     // Find signature fields
     let mut signatures = Vec::new();
 
@@ -233,6 +231,11 @@ pub fn verify_signature(data: &[u8], _signature_index: usize) -> Result<serde_js
         "signatures": signatures,
         "count": signatures.len(),
     }))
+}
+
+pub fn verify_signature(data: &[u8], _signature_index: usize) -> Result<serde_json::Value, String> {
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
+    verify_signature_in_doc(&doc)
 }
 
 // ===== HARDWARE TOKEN (PKCS#11 STUB) =====

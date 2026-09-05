@@ -57,14 +57,16 @@ impl DocumentSession {
 
     /// Mutate the inner Document with automatic cache invalidation and dirty marking.
     /// This prevents cache consistency bugs when modifying the document model.
+    /// Even if the mutator returns Err, any partial modification to `doc` invalidates `cached_bytes`
+    /// to eliminate phantom/stale cache risk.
     pub fn mutate<F, R>(&mut self, f: F) -> Result<R, String>
     where
         F: FnOnce(&mut lopdf::Document) -> Result<R, String>,
     {
-        let result = f(&mut self.doc)?;
+        let res = f(&mut self.doc);
         self.dirty = true;
         self.cached_bytes = None;
-        Ok(result)
+        res
     }
 
     pub fn push_undo(&mut self, cmd: EditCommand) {
@@ -90,25 +92,34 @@ impl DocumentSession {
         self.cached_bytes = None;
     }
 
+    // Evict oldest entries from undo_stack if total undo + redo exceeds target budget.
+    // Notice: This is a memory budget (soft threshold), not a hard cap.
+    // We always preserve at least 1 undo entry so that even large files (>512MB) retain immediate undo capability.
     fn evict_oldest_history(&mut self) {
-        // Evict oldest entries from undo_stack if total undo + redo exceeds target threshold.
-        // Keep at least 1 entry so that large files (>512MB) still retain their immediate undo.
         while self.total_history_bytes > TARGET_HISTORY_MEMORY_PER_DOC && self.undo_stack.len() > 1 {
             let evicted = self.undo_stack.remove(0);
             self.total_history_bytes = self.total_history_bytes.saturating_sub(evicted.byte_size());
         }
     }
 
-    pub fn save_to_bytes(&mut self) -> Result<Vec<u8>, String> {
-        if let Some(ref bytes) = self.cached_bytes {
-            return Ok(bytes.clone());
+    /// Access cached or serialized bytes by reference without allocating or cloning the entire PDF buffer.
+    pub fn with_bytes<F, R>(&mut self, f: F) -> Result<R, String>
+    where
+        F: FnOnce(&[u8]) -> Result<R, String>,
+    {
+        if self.cached_bytes.is_none() {
+            let mut buf = Vec::new();
+            self.doc
+                .save_to(&mut buf)
+                .map_err(|e| format!("Failed to serialize PDF: {e}"))?;
+            self.cached_bytes = Some(buf);
         }
-        let mut buf = Vec::new();
-        self.doc
-            .save_to(&mut buf)
-            .map_err(|e| format!("Failed to serialize PDF: {e}"))?;
-        self.cached_bytes = Some(buf.clone());
-        Ok(buf)
+        let bytes = self.cached_bytes.as_ref().unwrap();
+        f(bytes.as_slice())
+    }
+
+    pub fn save_to_bytes(&mut self) -> Result<Vec<u8>, String> {
+        self.with_bytes(|b| Ok(b.to_vec()))
     }
 
     pub fn undo(&mut self) -> Result<bool, String> {
@@ -250,10 +261,18 @@ mod tests {
     fn dummy_pdf() -> Vec<u8> {
         let mut doc = lopdf::Document::with_version("1.7");
         let pages_id = doc.add_object(lopdf::Object::Dictionary(lopdf::Dictionary::new()));
+
+        let content = b"BT /F1 12 Tf 50 50 Td (Hello World) Tj ET";
+        let content_id = doc.add_object(lopdf::Object::Stream(lopdf::Stream::new(
+            lopdf::Dictionary::new(),
+            content.to_vec(),
+        )));
+
         let mut page_dict = lopdf::Dictionary::new();
         page_dict.set("Type", lopdf::Object::Name("Page".into()));
         page_dict.set("Parent", lopdf::Object::Reference(pages_id));
         page_dict.set("MediaBox", lopdf::Object::Array(vec![lopdf::Object::Real(0.0), lopdf::Object::Real(0.0), lopdf::Object::Real(100.0), lopdf::Object::Real(100.0)]));
+        page_dict.set("Contents", lopdf::Object::Reference(content_id));
         let page_id = doc.add_object(lopdf::Object::Dictionary(page_dict));
 
         let mut pages_dict = lopdf::Dictionary::new();
@@ -412,6 +431,172 @@ mod tests {
         // After modification, save_to_bytes re-serializes with updated state
         let b3 = session.save_to_bytes().unwrap();
         assert_ne!(b1, b3);
+    }
+
+    #[test]
+    fn test_mutate_error_invalidates_cache_and_marks_dirty() {
+        let pdf = dummy_pdf();
+        let manager = SessionManager::new();
+        let id = manager.create_session(&pdf).expect("Create session");
+        let session_arc = manager.get_session(&id).expect("Get session");
+        let mut session = session_arc.write().unwrap();
+
+        // Warm up cache
+        let _ = session.save_to_bytes().unwrap();
+        assert!(session.cached_bytes.is_some());
+        session.dirty = false;
+
+        // mutate with closure returning Err
+        let err_res: Result<(), String> = session.mutate(|_doc| {
+            Err("Partial failure during operation".to_string())
+        });
+        assert!(err_res.is_err());
+
+        // Cache must be invalidated and dirty marked to prevent phantom cache
+        assert!(session.cached_bytes.is_none());
+        assert!(session.dirty);
+    }
+
+    #[test]
+    fn test_rotate_textedit_undo_regression() {
+        let pdf = dummy_pdf();
+        let manager = SessionManager::new();
+        let id = manager.create_session(&pdf).expect("Create session");
+        let session_arc = manager.get_session(&id).expect("Get session");
+
+        // Helper to extract rotation of page 0
+        let get_rotation = |doc: &lopdf::Document| -> i32 {
+            let p_ids = doc.page_iter().collect::<Vec<_>>();
+            doc.objects.get(&p_ids[0])
+                .and_then(|o| o.as_dict().ok())
+                .and_then(|d| d.get(b"Rotate").ok())
+                .and_then(|r| r.as_i64().ok())
+                .unwrap_or(0) as i32
+        };
+
+        // Helper to extract text from page 0
+        let get_text = |doc: &lopdf::Document| -> String {
+            let p_ids = doc.page_iter().collect::<Vec<_>>();
+            let p0 = p_ids[0];
+            let dict = doc.objects.get(&p0).unwrap().as_dict().unwrap();
+            let c_id = dict.get(b"Contents").unwrap().as_reference().unwrap();
+            let stream = doc.objects.get(&c_id).unwrap().as_stream().unwrap();
+            let content = lopdf::content::Content::decode(&stream.content).unwrap();
+            let mut s = String::new();
+            for op in content.operations {
+                if op.operator == "Tj" {
+                    if let Some(lopdf::Object::String(bytes, _)) = op.operands.first() {
+                        s.push_str(&String::from_utf8_lossy(bytes));
+                    }
+                }
+            }
+            s
+        };
+
+        // 0. Initial State: rotation = 0, text = "Hello World"
+        {
+            let s = session_arc.read().unwrap();
+            assert_eq!(get_rotation(&s.doc), 0);
+            assert_eq!(get_text(&s.doc), "Hello World");
+        }
+
+        // 1. Rotate page (fast path in session) -> rotation = 90, text = "Hello World"
+        {
+            let mut s = session_arc.write().unwrap();
+            let from_deg = get_rotation(&s.doc);
+            crate::pdf_engine::rotate_page_in_doc(&mut s.doc, 0, 90).unwrap();
+            s.push_undo(EditCommand::RotatePage {
+                page: 0,
+                from_degrees: from_deg,
+                to_degrees: from_deg + 90,
+            });
+            assert_eq!(get_rotation(&s.doc), 90);
+            assert_eq!(get_text(&s.doc), "Hello World");
+        }
+
+        // 2. TextEdit using real `crate::pdf_engine::edit_text_block` on session bytes
+        // and updating session in-place with FullSnapshot -> rotation = 90, text = "Hello Antigravity"
+        {
+            let mut s = session_arc.write().unwrap();
+            let current_bytes = s.save_to_bytes().unwrap();
+
+            // Run the actual engine function `edit_text_block`
+            let updated_bytes = crate::pdf_engine::edit_text_block(
+                &current_bytes,
+                0,
+                0,
+                "Hello Antigravity",
+            ).expect("edit_text_block should succeed");
+
+            s.push_undo(EditCommand::FullSnapshot {
+                description: "Edit text block #0".into(),
+                data: current_bytes,
+            });
+            s.doc = lopdf::Document::load_mem(&updated_bytes).unwrap();
+            s.dirty = true;
+            s.invalidate_cache();
+
+            // CRITICAL ASSERTION: Prior rotation (90 deg) must NOT be lost after text edit!
+            assert_eq!(get_rotation(&s.doc), 90);
+            assert_eq!(get_text(&s.doc), "Hello Antigravity");
+            assert_eq!(s.undo_stack.len(), 2);
+        }
+
+        // 3. Undo #1 (Reverts TextEdit) -> rotation = 90, text = "Hello World"
+        {
+            let mut s = session_arc.write().unwrap();
+            assert!(s.undo().unwrap());
+            assert_eq!(s.undo_stack.len(), 1);
+            assert_eq!(s.redo_stack.len(), 1);
+
+            // Verified: text reverted, but rotation remains 90
+            assert_eq!(get_rotation(&s.doc), 90);
+            assert_eq!(get_text(&s.doc), "Hello World");
+        }
+
+        // 4. Undo #2 (Reverts Rotate) -> rotation = 0, text = "Hello World"
+        {
+            let mut s = session_arc.write().unwrap();
+            assert!(s.undo().unwrap());
+            assert_eq!(s.undo_stack.len(), 0);
+            assert_eq!(s.redo_stack.len(), 2);
+
+            // Verified: back to initial state
+            assert_eq!(get_rotation(&s.doc), 0);
+            assert_eq!(get_text(&s.doc), "Hello World");
+        }
+
+        // 5. Redo #1 (Reapplies Rotate) -> rotation = 90, text = "Hello World"
+        {
+            let mut s = session_arc.write().unwrap();
+            assert!(s.redo().unwrap());
+            assert_eq!(s.undo_stack.len(), 1);
+            assert_eq!(s.redo_stack.len(), 1);
+
+            assert_eq!(get_rotation(&s.doc), 90);
+            assert_eq!(get_text(&s.doc), "Hello World");
+        }
+
+        // 6. Redo #2 (Reapplies TextEdit) -> rotation = 90, text = "Hello Antigravity"
+        {
+            let mut s = session_arc.write().unwrap();
+            assert!(s.redo().unwrap());
+            assert_eq!(s.undo_stack.len(), 2);
+            assert_eq!(s.redo_stack.len(), 0);
+
+            assert_eq!(get_rotation(&s.doc), 90);
+            assert_eq!(get_text(&s.doc), "Hello Antigravity");
+        }
+
+        // 7. Save / Serialize & Re-load from raw bytes -> verify persisted Document
+        {
+            let mut s = session_arc.write().unwrap();
+            let saved_bytes = s.save_to_bytes().expect("Serialization must succeed");
+            let reloaded_doc = lopdf::Document::load_mem(&saved_bytes).expect("Reloading must succeed");
+
+            assert_eq!(get_rotation(&reloaded_doc), 90, "Serialized document must preserve 90 deg rotation");
+            assert_eq!(get_text(&reloaded_doc), "Hello Antigravity", "Serialized document must preserve edited text");
+        }
     }
 }
 

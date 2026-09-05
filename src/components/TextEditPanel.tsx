@@ -1,10 +1,12 @@
 import { useState, useCallback, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { DocumentService } from '../services/documentService'
 import { SectionTitle, Input, NumInput, ColorInput, AccentBtn } from './UIControls'
 import type { TextBlock } from './PDFViewer'
 
 export function TextEditPanel({
   pdfData,
+  docId,
   exec,
   showToast,
   onPdfUpdate,
@@ -12,6 +14,7 @@ export function TextEditPanel({
   currentPage
 }: {
   pdfData: number[] | null
+  docId?: string | null
   exec: Function
   showToast: (msg: string) => void
   onPdfUpdate: (data: number[]) => void
@@ -47,12 +50,21 @@ export function TextEditPanel({
     }
   }, [selectedBlockFromCanvas])
 
-  const reloadBlocks = useCallback(async (data: number[]) => {
+  const getCurrentBytes = useCallback(async (): Promise<number[] | null> => {
+    if (docId) {
+      return DocumentService.getSessionBytes(docId)
+    }
+    return pdfData
+  }, [docId, pdfData])
+
+  const reloadBlocks = useCallback(async (dataOrDocId?: number[] | string) => {
     try {
-      const blocks = await invoke<Block[]>('get_text_blocks', { data, page_index: pageIndex })
+      const target = dataOrDocId || docId || pdfData
+      if (!target) return
+      const blocks = await DocumentService.getTextBlocks(target, pageIndex) as Block[]
       setTextBlocks(blocks)
     } catch (err) { showToast(`エラー: ${err}`) }
-  }, [pageIndex, showToast])
+  }, [docId, pdfData, pageIndex, showToast])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -65,7 +77,7 @@ export function TextEditPanel({
         <div className="inspector-card-desc">画面クリックまたは一覧からテキストを選択して編集</div>
 
         <NumInput value={pageIndex} onChange={setPageIndex} label="ページ番号" />
-        <AccentBtn onClick={() => { if (pdfData) reloadBlocks(pdfData) }} style={{ width: '100%', marginBottom: 8, background: 'var(--bg-2)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+        <AccentBtn onClick={() => reloadBlocks()} style={{ width: '100%', marginBottom: 8, background: 'var(--bg-2)', color: 'var(--text)', border: '1px solid var(--border)' }}>
           テキストブロック読込
         </AccentBtn>
 
@@ -104,10 +116,11 @@ export function TextEditPanel({
             <Input value={editTextVal} onChange={setEditTextVal} placeholder="新しいテキスト" />
             <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
               <AccentBtn onClick={async () => {
-                if (!pdfData) return
+                const bytes = await getCurrentBytes()
+                if (!bytes) return
                 try {
-                  const result = await invoke<number[]>('edit_text_block', { data: pdfData, page_index: pageIndex, block_id: selectedBlock, new_text: editTextVal })
-                  onPdfUpdate(result)
+                  const result = await invoke<number[]>('edit_text_block', { data: bytes, page_index: pageIndex, block_id: selectedBlock, new_text: editTextVal })
+                  await onPdfUpdate(result)
                   await reloadBlocks(result)
                   showToast('テキストを更新しました')
                 } catch (err) { showToast(`エラー: ${err}`) }
@@ -115,10 +128,11 @@ export function TextEditPanel({
                 更新
               </AccentBtn>
               <AccentBtn onClick={async () => {
-                if (!pdfData) return
+                const bytes = await getCurrentBytes()
+                if (!bytes) return
                 try {
-                  const result = await invoke<number[]>('delete_text_block', { data: pdfData, page_index: pageIndex, block_id: selectedBlock })
-                  onPdfUpdate(result)
+                  const result = await invoke<number[]>('delete_text_block', { data: bytes, page_index: pageIndex, block_id: selectedBlock })
+                  await onPdfUpdate(result)
                   await reloadBlocks(result)
                   setSelectedBlock(null)
                   showToast('テキストを削除しました')
@@ -134,10 +148,11 @@ export function TextEditPanel({
               <NumInput value={moveY} onChange={setMoveY} label="Y座標 (pt)" />
             </div>
             <AccentBtn onClick={async () => {
-              if (!pdfData) return
+              const bytes = await getCurrentBytes()
+              if (!bytes) return
               try {
-                const result = await invoke<number[]>('move_text_block', { data: pdfData, page_index: pageIndex, block_id: selectedBlock, new_x: moveX, new_y: moveY })
-                onPdfUpdate(result)
+                const result = await invoke<number[]>('move_text_block', { data: bytes, page_index: pageIndex, block_id: selectedBlock, new_x: moveX, new_y: moveY })
+                await onPdfUpdate(result)
                 await reloadBlocks(result)
                 showToast('テキストを移動しました')
               } catch (err) { showToast(`エラー: ${err}`) }
@@ -178,9 +193,10 @@ export function TextEditPanel({
           <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>FONT</span>
         </div>
         <AccentBtn onClick={async () => {
-          if (!pdfData) return
+          const bytes = await getCurrentBytes()
+          if (!bytes) return
           try {
-            const fonts = await invoke<Array<{name: string; type: string}>>('get_fonts', { data: pdfData })
+            const fonts = await invoke<Array<{name: string; type: string}>>('get_fonts', { data: bytes })
             showToast(`${fonts.length}個のフォントを検出`)
           } catch (err) { showToast(`エラー: ${err}`) }
         }} style={{ background: 'var(--bg-2)', color: 'var(--text)', border: '1px solid var(--border)' }}>

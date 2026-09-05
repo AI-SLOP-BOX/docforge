@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { invoke } from '@tauri-apps/api/core'
+import { DocumentService } from '../services/documentService'
 import { Input, AccentBtn } from './UIControls'
 
 export interface SignatureInfo {
@@ -20,11 +20,13 @@ export function SecurityPanel({
   showToast,
   onInspectSignatures,
   pdfData,
+  docId,
 }: {
   exec: Function
   showToast: (msg: string) => void
   onInspectSignatures?: (sigs: SignatureInfo[]) => void
   pdfData: number[] | null
+  docId?: string | null
 }) {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -32,12 +34,10 @@ export function SecurityPanel({
   const [signReason, setSignReason] = useState('')
 
   const handleVerify = async () => {
-    if (!pdfData) return
+    const target = docId || pdfData
+    if (!target) return
     try {
-      const result = await invoke<{ signatures?: SignatureInfo[]; count?: number }>('verify_signature', {
-        data: pdfData,
-        signature_index: 0,
-      })
+      const result = await DocumentService.verifySignatures(target)
       if (result && result.signatures) {
         onInspectSignatures?.(result.signatures)
         showToast(`${result.signatures.length}件の署名を検証しました`)

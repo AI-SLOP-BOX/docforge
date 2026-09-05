@@ -146,6 +146,8 @@ export default function PDFEditorView() {
       try {
         const ok = await DocumentService.undo(docId)
         if (ok) {
+          const currentBytes = await DocumentService.getSessionBytes(docId).catch(() => null)
+          if (currentBytes) setPdfData(currentBytes)
           setRevision(r => r + 1)
           await refreshHistoryStatus(docId)
           showSuccess(t().undo)
@@ -156,13 +158,15 @@ export default function PDFEditorView() {
     } else {
       fallbackUndo()
     }
-  }, [docId, fallbackUndo, refreshHistoryStatus, showError, showSuccess])
+  }, [docId, fallbackUndo, refreshHistoryStatus, setPdfData, showError, showSuccess])
 
   const handleRedo = useCallback(async () => {
     if (docId) {
       try {
         const ok = await DocumentService.redo(docId)
         if (ok) {
+          const currentBytes = await DocumentService.getSessionBytes(docId).catch(() => null)
+          if (currentBytes) setPdfData(currentBytes)
           setRevision(r => r + 1)
           await refreshHistoryStatus(docId)
           showSuccess(t().redo)
@@ -173,7 +177,7 @@ export default function PDFEditorView() {
     } else {
       fallbackRedo()
     }
-  }, [docId, fallbackRedo, refreshHistoryStatus, showError, showSuccess])
+  }, [docId, fallbackRedo, refreshHistoryStatus, setPdfData, showError, showSuccess])
 
   const canUndo = docId ? sessionCanUndo : fallbackCanUndo
   const canRedo = docId ? sessionCanRedo : fallbackCanRedo
@@ -208,6 +212,8 @@ export default function PDFEditorView() {
           const pIdx = (args.page_index as number) ?? currentPage
           const deg = (args.degrees as number) ?? 90
           await DocumentService.rotatePage(docId, pIdx, deg)
+          const currentBytes = await DocumentService.getSessionBytes(docId).catch(() => null)
+          if (currentBytes) setPdfData(currentBytes)
           setRevision(r => r + 1)
           await refreshHistoryStatus(docId)
           showSuccess(t().completed)
@@ -215,6 +221,8 @@ export default function PDFEditorView() {
         } else if (cmd === 'delete_page') {
           const pIdx = (args.page_index as number) ?? currentPage
           await DocumentService.deletePage(docId, pIdx)
+          const currentBytes = await DocumentService.getSessionBytes(docId).catch(() => null)
+          if (currentBytes) setPdfData(currentBytes)
           setRevision(r => r + 1)
           await refreshHistoryStatus(docId)
           showSuccess(t().completed)
@@ -432,6 +440,7 @@ export default function PDFEditorView() {
               <AnnotatePanel
                 exec={exec}
                 pdfData={pdfData}
+                docId={docId}
                 annotationColor={annotationColor}
                 setAnnotationColor={setAnnotationColor}
                 stickyNoteText={stickyNoteText}
@@ -445,6 +454,7 @@ export default function PDFEditorView() {
             {activeTab === 'forms' && (
               <FormCreatorPanel
                 pdfData={pdfData}
+                docId={docId}
                 currentPage={currentPage}
                 exec={exec}
                 showToast={showToast}
@@ -474,6 +484,7 @@ export default function PDFEditorView() {
               <SecurityPanel
                 exec={exec}
                 pdfData={pdfData}
+                docId={docId}
                 showToast={showToast}
                 onInspectSignatures={(sigs: SignatureInfo[]) => setVerifiedSignatures(sigs)}
               />
@@ -481,6 +492,7 @@ export default function PDFEditorView() {
             {activeTab === 'text' && (
               <TextEditPanel
                 pdfData={pdfData}
+                docId={docId}
                 exec={exec}
                 showToast={showToast}
                 onPdfUpdate={handlePdfUpdate}
@@ -492,6 +504,7 @@ export default function PDFEditorView() {
               <ToolsPanel
                 exec={exec}
                 pdfData={pdfData}
+                docId={docId}
                 redactColor={redactColor} setRedactColor={setRedactColor}
                 redactSearchText={redactSearchText} setRedactSearchText={setRedactSearchText}
                 redactReplacement={redactReplacement} setRedactReplacement={setRedactReplacement}

@@ -240,8 +240,7 @@ pub fn session_render_page_to_png(
 ) -> Result<Vec<u8>, String> {
     let session_arc = manager.get_session(&doc_id)?;
     let mut session = session_arc.write().map_err(|e| e.to_string())?;
-    let bytes = session.save_to_bytes()?;
-    pdf_engine::render_page_to_png(&bytes, page_index, dpi)
+    session.with_bytes(|bytes| pdf_engine::render_page_to_png(bytes, page_index, dpi))
 }
 
 #[tauri::command]
@@ -259,16 +258,27 @@ pub fn session_render_color_separation(
 ) -> Result<Vec<u8>, String> {
     let session_arc = manager.get_session(&doc_id)?;
     let mut session = session_arc.write().map_err(|e| e.to_string())?;
-    let bytes = session.save_to_bytes()?;
-    pdf_engine::render_color_separation(
-        &bytes,
-        page_index,
-        dpi,
-        show_c,
-        show_m,
-        show_y,
-        show_k,
-        highlight_tac,
-        tac_limit,
-    )
+    session.with_bytes(|bytes| {
+        pdf_engine::render_color_separation(
+            bytes,
+            page_index,
+            dpi,
+            show_c,
+            show_m,
+            show_y,
+            show_k,
+            highlight_tac,
+            tac_limit,
+        )
+    })
+}
+
+#[tauri::command]
+pub fn session_verify_signature(
+    doc_id: String,
+    manager: tauri::State<'_, crate::session::SessionManager>,
+) -> Result<serde_json::Value, String> {
+    let session_arc = manager.get_session(&doc_id)?;
+    let session = session_arc.read().map_err(|e| e.to_string())?;
+    pdf_engine::verify_signature_in_doc(&session.doc)
 }

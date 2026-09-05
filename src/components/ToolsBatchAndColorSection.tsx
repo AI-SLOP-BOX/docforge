@@ -1,20 +1,30 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
+import { DocumentService } from '../services/documentService'
 import { SectionTitle, AccentBtn } from './UIControls'
 
 interface ToolsBatchAndColorSectionProps {
   exec: Function
   pdfData: number[] | null
+  docId?: string | null
   showToast: (msg: string) => void
 }
 
 export function ToolsBatchAndColorSection({
   exec,
   pdfData,
+  docId,
   showToast,
 }: ToolsBatchAndColorSectionProps) {
   const [batchPaths, setBatchPaths] = useState<string[]>([])
+
+  const getCurrentBytes = async (): Promise<number[] | null> => {
+    if (docId) {
+      return DocumentService.getSessionBytes(docId)
+    }
+    return pdfData
+  }
 
   return (
     <div>
@@ -75,9 +85,10 @@ export function ToolsBatchAndColorSection({
         注釈をXFDF形式で書き出し/取り込み
       </div>
       <AccentBtn onClick={async () => {
-        if (!pdfData) return
+        const bytes = await getCurrentBytes()
+        if (!bytes) return
         try {
-          const xfdf = await invoke<string>('export_xfdf', { data: pdfData })
+          const xfdf = await invoke<string>('export_xfdf', { data: bytes })
           const blob = new Blob([xfdf], { type: 'application/xfdf' })
           const url = URL.createObjectURL(blob)
           const a = document.createElement('a')
@@ -90,7 +101,8 @@ export function ToolsBatchAndColorSection({
         XFDFエクスポート
       </AccentBtn>
       <AccentBtn onClick={async () => {
-        if (!pdfData) return
+        const bytes = await getCurrentBytes()
+        if (!bytes) return
         const input = document.createElement('input')
         input.type = 'file'
         input.accept = '.xfdf,.fdf'
@@ -99,7 +111,7 @@ export function ToolsBatchAndColorSection({
           if (file) {
             const text = await file.text()
             try {
-              await invoke<number[]>('import_xfdf', { data: pdfData, xfdf_content: text })
+              await invoke<number[]>('import_xfdf', { data: bytes, xfdf_content: text })
               showToast('XFDFをインポートしました')
             } catch (err) { showToast(`エラー: ${err}`) }
           }

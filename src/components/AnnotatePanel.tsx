@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { DocumentService } from '../services/documentService'
 import { Input, NumInput, ColorInput, AccentBtn } from './UIControls'
 import { HighlightIcon, RectIcon } from './Icons'
 
 export function AnnotatePanel({
   exec,
   pdfData,
+  docId,
   annotationColor,
   setAnnotationColor,
   stickyNoteText,
@@ -17,6 +19,7 @@ export function AnnotatePanel({
 }: {
   exec: Function
   pdfData: number[] | null
+  docId?: string | null
   annotationColor: string
   setAnnotationColor: (v: string) => void
   stickyNoteText: string
@@ -37,8 +40,10 @@ export function AnnotatePanel({
   }>>([])
   const [selectedAnnot, setSelectedAnnot] = useState<string | null>(null)
 
-  const loadAnnotations = async (pdfData: number[]) => {
+  const loadAnnotations = async () => {
     try {
+      const bytes = docId ? await DocumentService.getSessionBytes(docId) : pdfData
+      if (!bytes) return
       const result = await invoke<Array<{
         id: string
         type: string
@@ -47,7 +52,7 @@ export function AnnotatePanel({
         page: number
         status: string
         replies: Array<{ author: string; contents: string }>
-      }>>('get_annotations', { data: pdfData })
+      }>>('get_annotations', { data: bytes })
       setAnnotations(result || [])
     } catch (err) {
       console.error('Failed to load annotations:', err)
@@ -121,7 +126,7 @@ export function AnnotatePanel({
           <span>注釈一覧</span>
           <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{annotations.length} 件</span>
         </div>
-        <AccentBtn onClick={() => { if (pdfData) loadAnnotations(pdfData) }} style={{ background: 'var(--bg-2)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+        <AccentBtn onClick={() => loadAnnotations()} style={{ background: 'var(--bg-2)', color: 'var(--text)', border: '1px solid var(--border)' }}>
           注釈を読み込み
         </AccentBtn>
         {annotations.length > 0 && (

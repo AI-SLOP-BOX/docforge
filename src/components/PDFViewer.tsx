@@ -554,6 +554,7 @@ export default function PDFViewer({
                   editingTextVal={editingTextVal}
                   setEditingTextVal={setEditingTextVal}
                   pdfData={pdfData}
+                  docId={docId}
                   currentPage={currentPage}
                   onPdfUpdate={onPdfUpdate}
                   imgRenderedSize={imgRenderedSize}

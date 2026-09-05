@@ -209,4 +209,11 @@ export class DocumentService {
     }
     return invoke<SearchResult[]>('search_text', { data: docIdOrData, query })
   }
+
+  static async verifySignatures(docIdOrData: string | number[]): Promise<{ signatures?: any[]; count?: number }> {
+    if (typeof docIdOrData === 'string') {
+      return invoke('session_verify_signature', { docId: docIdOrData })
+    }
+    return invoke('verify_signature', { data: docIdOrData, signature_index: 0 })
+  }
 }

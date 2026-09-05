@@ -1,15 +1,18 @@
 import { useState, useCallback, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { DocumentService } from '../services/documentService'
 import { SectionTitle, Input, NumInput, AccentBtn } from './UIControls'
 import { PlusIcon, ZapIcon } from './Icons'
 
 export function FormCreatorPanel({
   pdfData,
+  docId,
   currentPage,
   showToast,
   onPdfUpdate,
 }: {
   pdfData: number[] | null
+  docId?: string | null
   currentPage: number
   exec?: Function
   showToast: (msg: string) => void
@@ -32,25 +35,34 @@ export function FormCreatorPanel({
   // Field list
   const [existingFields, setExistingFields] = useState<Array<{ name: string; type: string; value: string }>>([])
 
+  const getCurrentBytes = useCallback(async (): Promise<number[] | null> => {
+    if (docId) {
+      return DocumentService.getSessionBytes(docId)
+    }
+    return pdfData
+  }, [docId, pdfData])
+
   const loadFields = useCallback(async () => {
-    if (!pdfData) return
+    const target = docId || pdfData
+    if (!target) return
     try {
-      const fields = await invoke<Array<{ name: string; type: string; value: string }>>('get_form_fields', { data: pdfData })
+      const fields = await DocumentService.getFormFields(target)
       setExistingFields(fields || [])
     } catch (err) {
       showToast(`フォーム取得エラー: ${err}`)
     }
-  }, [pdfData, showToast])
+  }, [docId, pdfData, showToast])
 
   useEffect(() => {
     loadFields()
   }, [loadFields])
 
   const handleCreateField = async () => {
-    if (!pdfData) return
+    const bytes = await getCurrentBytes()
+    if (!bytes) return
     try {
       const result = await invoke<number[]>('add_form_field', {
-        data: pdfData,
+        data: bytes,
         page_index: currentPage,
         field_name: fieldName,
         field_type: fieldType,
@@ -60,7 +72,7 @@ export function FormCreatorPanel({
         height,
         default_value: defaultValue,
       })
-      onPdfUpdate(result)
+      await onPdfUpdate(result)
       await loadFields()
       showToast(`フィールド「${fieldName}」を追加しました`)
     } catch (err) {
@@ -69,10 +81,11 @@ export function FormCreatorPanel({
   }
 
   const handleCreateCalculated = async () => {
-    if (!pdfData) return
+    const bytes = await getCurrentBytes()
+    if (!bytes) return
     try {
       const result = await invoke<number[]>('add_calculated_field', {
-        data: pdfData,
+        data: bytes,
         page_index: currentPage,
         field_name: calcFieldName,
         formula: calcFormula,
@@ -81,7 +94,7 @@ export function FormCreatorPanel({
         width: 150,
         height: 25,
       })
-      onPdfUpdate(result)
+      await onPdfUpdate(result)
       await loadFields()
       showToast(`計算フィールド「${calcFieldName}」を追加しました`)
     } catch (err) {
