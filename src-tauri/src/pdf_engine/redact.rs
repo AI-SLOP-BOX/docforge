@@ -91,7 +91,7 @@ pub fn redact_text(
     save_doc(&mut doc)
 }
 
-// ===== DEEP REDACTION (Complete Data Purging - Acrobat Pro Level) =====
+// ===== DEEP REDACTION (Complete Data Purging - Permanent Removal) =====
 
 pub fn deep_redact(
     data: &[u8],

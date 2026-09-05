@@ -10,7 +10,7 @@ pub struct ScanEnhanceOptions {
     pub contrast_boost: f32, // 1.0 = normal, 1.5 = high
 }
 
-/// Acrobat Pro-grade scanned document enhancement pipeline:
+/// Professional scanned document enhancement pipeline:
 /// 1. Automatic deskew via horizontal projection profile analysis
 /// 2. Bleed-through and shadow removal via adaptive background normalization
 /// 3. Crisp text binarization (Sauvola-style adaptive windowing)

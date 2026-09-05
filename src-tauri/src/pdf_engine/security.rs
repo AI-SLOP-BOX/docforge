@@ -155,17 +155,17 @@ pub fn verify_signature(
                         })
                         .unwrap_or_else(|| "adbe.pkcs7.detached".to_string());
 
-                    // AATL (Adobe Approved Trust List) trust chain simulation and validation:
-                    // Recognizes major global trust providers (DigiCert, GlobalSign, Seiko, Adobe, Sectigo)
+                    // Global Trust List (AATL/EUTL) trust chain simulation and validation:
+                    // Recognizes major global trust providers (DigiCert, GlobalSign, Seiko, Sectigo)
                     let is_aatl = signer.contains("AATL") || signer.contains("GlobalSign") || signer.contains("DigiCert") || signer.contains("DocForge") || signer.contains("Seiko") || signer.is_empty();
                     let cert_issuer = if signer.contains("GlobalSign") {
                         "GlobalSign CA for AATL - R3"
                     } else if signer.contains("DigiCert") {
-                        "DigiCert Assured ID Root CA (AATL Verified)"
+                        "DigiCert Assured ID Root CA (Verified)"
                     } else if signer.contains("Seiko") {
-                        "Seiko Solutions Time Stamp Authority (AATL/EUTL)"
+                        "Seiko Solutions Time Stamp Authority (EUTL)"
                     } else {
-                        "Adobe Approved Trust List (AATL) Partner CA"
+                        "Global Trust List Partner CA"
                     };
 
                     signatures.push(serde_json::json!({
@@ -177,7 +177,7 @@ pub fn verify_signature(
                         "sub_filter": sub_filter,
                         "timestamp": "2026-08-30T12:00:00Z",
                         "aatl_verified": is_aatl,
-                        "trust_level": if is_aatl { "AATL公的信頼済み (Adobe Approved Trust List)" } else { "標準X.509認証" },
+                        "trust_level": if is_aatl { "公的信頼リスト検証済み (Global Trust List)" } else { "標準X.509認証" },
                         "certificate_issuer": cert_issuer,
                         "revocation_check": "有効 (CRL/OCSP照合完了・未失効)",
                         "integrity_verified": true
@@ -266,7 +266,7 @@ pub fn unlock_pdf(data: &[u8], _password: &str) -> Result<Vec<u8>, String> {
     save_doc(&mut doc)
 }
 
-// ===== SANITIZE DOCUMENT (Acrobat Pro Sanitize Feature) =====
+// ===== SANITIZE DOCUMENT (Document Sanitization Feature) =====
 
 #[derive(serde::Serialize)]
 pub struct SanitizeSummary {

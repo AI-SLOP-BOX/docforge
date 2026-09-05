@@ -5,7 +5,7 @@ use std::process::exit;
 
 fn print_usage() {
     eprintln!(r#"
-DocForge CLI - High-Performance Acrobat Pro Alternative Engine
+DocForge CLI - High-Performance Professional PDF Engine
 ===============================================================
 Usage: docforge-cli <command> [arguments...]
 

@@ -415,7 +415,7 @@ export function ToolsPanel({
         ページ番号追加（右下）
       </AccentBtn>
 
-      <SectionTitle>Acrobat Pro限定機能</SectionTitle>
+      <SectionTitle>高度なプロフェッショナル機能</SectionTitle>
       <AccentBtn onClick={async () => {
         const paths = await open({ filters: [{ name: 'Files', extensions: ['*'] }], multiple: true })
         if (paths) {

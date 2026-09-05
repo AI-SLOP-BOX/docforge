@@ -2,7 +2,7 @@
   "name": "docforge",
   "private": true,
   "version": "1.0.0",
-  "description": "Acrobat Pro-level PDF editor with local processing",
+  "description": "Professional-grade high-performance PDF editor with 100% local processing",
   "license": "MIT",
   "type": "module",
   "scripts": {

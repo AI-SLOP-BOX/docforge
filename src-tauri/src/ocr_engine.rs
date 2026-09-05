@@ -70,7 +70,7 @@ pub fn ocr_files(paths: &[String], language: &str) -> Result<OCRResult, String> 
 }
 
 fn run_tesseract(image_path: &str, language: &str) -> Result<(String, f64, Vec<OCRSuspect>), String> {
-    // Use high-quality settings for Acrobat Pro level accuracy
+    // Use high-quality settings for maximum accuracy
     let output = Command::new("tesseract")
         .args([
             image_path, "stdout",

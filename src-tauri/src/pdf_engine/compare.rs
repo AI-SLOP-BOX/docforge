@@ -24,7 +24,7 @@ pub struct CompareReport {
     pub diffs: Vec<DiffItem>,
 }
 
-/// Acrobat Pro-grade semantic & graphical document comparison.
+/// Professional semantic & graphical document comparison.
 /// Compares text blocks across pages and detects changes, additions, and deletions.
 pub fn compare_pdf_documents(original: &[u8], revised: &[u8]) -> Result<CompareReport, String> {
     let doc_orig = Document::load_mem(original)

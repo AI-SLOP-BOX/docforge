@@ -404,7 +404,7 @@ fn add_page_numbers(data: Vec<u8>, position: String, font_size: f32, start_numbe
     pdf_engine::add_page_numbers(&data, &position, font_size, start_number)
 }
 
-// ===== ACROBAT PRO EXCLUSIVE FEATURES =====
+// ===== ADVANCED PROFESSIONAL FEATURES =====
 
 #[tauri::command]
 fn create_action_wizard(name: String, steps: Vec<serde_json::Value>) -> Result<String, String> {
