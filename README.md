@@ -80,7 +80,25 @@
 - スキャン文書の傾き自動補正・裏写り除去
 - 2文書の差分比較（テキスト・座標解析）
 
-## インストール
+## ダウンロード（ワンクリック起動）
+
+開発環境（Node.js/Rust/Docker等）のセットアップは一切不要です。[Releases ページ](https://github.com/AI-SLOP-BOX/docforge/releases) からお使いのOSに合ったファイルをダウンロードするだけで即座に利用できます。
+
+| OS / デバイス | 配布形式 | ダウンロード・インストール |
+| :--- | :--- | :--- |
+| **macOS** (Apple Silicon / Intel) | `.dmg` | [最新の .dmg を入手](https://github.com/AI-SLOP-BOX/docforge/releases) → Applications にドラッグして起動 |
+| **Android** (スマートフォン/タブレット) | `.apk` | [最新の .apk を入手](https://github.com/AI-SLOP-BOX/docforge/releases) → タップしてそのままインストール |
+| **Linux** (Ubuntu / Fedora / Arch 等) | `.AppImage`, `.deb` | [最新の .AppImage を入手](https://github.com/AI-SLOP-BOX/docforge/releases) → 実行権限を付与して即起動 |
+| **Windows** (10 / 11) | `.exe` (ポータブル / インストーラー) | [最新の .exe を入手](https://github.com/AI-SLOP-BOX/docforge/releases) → ダブルクリックで即起動 |
+
+### 1行ワンライナー導入（macOS / Linux）
+```bash
+curl -fsSL https://raw.githubusercontent.com/AI-SLOP-BOX/docforge/main/install.sh | bash
+```
+
+---
+
+## 開発用・ソースコードからのビルド
 
 ### 必要なもの
 - [Node.js](https://nodejs.org/) (v18以上)
