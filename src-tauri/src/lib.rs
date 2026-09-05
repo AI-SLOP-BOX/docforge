@@ -5,6 +5,7 @@ pub mod commands_text;
 pub mod image_engine;
 pub mod ocr_engine;
 pub mod pdf_engine;
+pub mod session;
 pub use commands_advanced::*;
 pub use commands_io::*;
 pub use commands_prod::*;
@@ -578,7 +579,15 @@ pub fn run() {
             repair_corrupt_pdf,
             enhance_scanned_pdf,
             compare_pdf_documents,
+            session_open_pdf,
+            session_close,
+            session_get_bytes,
+            session_rotate_page,
+            session_delete_page,
+            session_undo,
+            session_redo,
         ])
+        .manage(session::SessionManager::new())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

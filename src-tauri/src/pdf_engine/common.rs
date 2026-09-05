@@ -248,9 +248,8 @@ pub fn delete_page(data: &[u8], page_index: usize) -> Result<Vec<u8>, String> {
     save_doc(&mut doc)
 }
 
-pub fn rotate_page(data: &[u8], page_index: usize, degrees: i32) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
-    let page_ids = get_page_ids(&doc);
+pub fn rotate_page_in_doc(doc: &mut Document, page_index: usize, degrees: i32) -> Result<(), String> {
+    let page_ids = get_page_ids(doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
     }
@@ -260,8 +259,15 @@ pub fn rotate_page(data: &[u8], page_index: usize, degrees: i32) -> Result<Vec<u
             Ok(Object::Integer(r)) => *r,
             _ => 0,
         };
-        dict.set("Rotate", Object::Integer(current + degrees as i64));
+        let new_rot = (current + degrees as i64).rem_euclid(360);
+        dict.set("Rotate", Object::Integer(new_rot));
     }
+    Ok(())
+}
+
+pub fn rotate_page(data: &[u8], page_index: usize, degrees: i32) -> Result<Vec<u8>, String> {
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
+    rotate_page_in_doc(&mut doc, page_index, degrees)?;
     save_doc(&mut doc)
 }
 

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import PDFViewer, { InteractiveMode, TextBlock } from '../components/PDFViewer'
@@ -22,6 +22,9 @@ import { useHistory } from '../hooks/useHistory'
 import { useToast } from '../hooks/useToast'
 import { formatError } from '../utils/errorHandler'
 import { t } from '../utils/i18n'
+
+import { DocumentService } from '../services/documentService'
+import { buildEditorCommandItems } from '../components/editorCommands'
 
 type Tab = 'edit' | 'annotate' | 'forms' | 'organize' | 'pages' | 'security' | 'text' | 'tools'
 
@@ -70,15 +73,11 @@ export default function PDFEditorView() {
 
   const handleOpen = useCallback(async () => {
     try {
-      const path = await open({
-        filters: [{ name: 'PDF', extensions: ['pdf'] }],
-        multiple: false,
-      })
-      if (!path) return
-      const bytes = await invoke<number[]>('read_file_bytes', { path: path as string })
-      setPdfData(bytes)
-      setFileName((path as string).split(/[/\\]/).pop() || 'document.pdf')
-      pushHistory(bytes)
+      const res = await DocumentService.openFileDialog()
+      if (!res) return
+      setPdfData(res.bytes)
+      setFileName(res.name)
+      pushHistory(res.bytes)
       showSuccess(t().pdfLoaded)
     } catch (err) {
       showError(formatError(err, 'PDFの読み込みに失敗しました'))
@@ -88,12 +87,8 @@ export default function PDFEditorView() {
   const handleSave = useCallback(async () => {
     if (!pdfData) return
     try {
-      const path = await save({
-        defaultPath: fileName || 'document.pdf',
-        filters: [{ name: 'PDF', extensions: ['pdf'] }],
-      })
+      const path = await DocumentService.saveFileDialog(fileName, pdfData)
       if (!path) return
-      await invoke('write_file_bytes', { path, data: pdfData })
       showSuccess(t().savedSuccess)
     } catch (err) {
       showError(formatError(err, 'PDFの保存に失敗しました'))
@@ -215,157 +210,16 @@ export default function PDFEditorView() {
   }
 
   // Command items for ⌘K Quick Launcher
-  const commandItems: CommandItem[] = [
-    {
-      id: 'open',
-      title: 'PDFを開く',
-      subtitle: 'ローカルのPDFドキュメントを選択して読み込み',
-      category: 'edit',
-      icon: <FolderOpenIcon size={14} />,
-      shortcut: '⌘O',
-      action: handleOpen,
-    },
-    {
-      id: 'save',
-      title: 'PDFを保存',
-      subtitle: '編集結果をPDF形式でローカルディスクに書き出し',
-      category: 'edit',
-      icon: <SaveIcon size={14} />,
-      shortcut: '⌘S',
-      action: handleSave,
-    },
-    {
-      id: 'tab-edit',
-      title: '編集タブ（テキスト・組版リフロー）',
-      subtitle: 'インプレース文字置換、JIS X 4051禁則組版リフロー',
-      category: 'edit',
-      icon: <EditIcon size={14} />,
-      action: () => handleSelectTab('edit'),
-    },
-    {
-      id: 'tab-annotate',
-      title: '注釈・マークアップ',
-      subtitle: 'ハイライト、付箋、描画、図形ツール',
-      category: 'annotate',
-      icon: <AnnotateIcon size={14} />,
-      action: () => handleSelectTab('annotate'),
-    },
-    {
-      id: 'tab-forms',
-      title: 'インタラクティブフォーム作成',
-      subtitle: 'テキストフィールド、チェックボックス、電子署名枠の配置',
-      category: 'forms',
-      icon: <FormIcon size={14} />,
-      action: () => handleSelectTab('forms'),
-    },
-    {
-      id: 'tab-organize',
-      title: 'ページ整理・分割・結合',
-      subtitle: '回転、削除、抽出、順序並び替え、複数ファイル結合',
-      category: 'organize',
-      icon: <OrganizeIcon size={14} />,
-      action: () => handleSelectTab('organize'),
-    },
-    {
-      id: 'tab-pages',
-      title: 'ページ装飾（透かし・ヘッダー・ベイツ）',
-      subtitle: '裁判所証拠用Bates番号付与、セキュリティ透かし',
-      category: 'pages',
-      icon: <FileIcon size={14} />,
-      action: () => handleSelectTab('pages'),
-    },
-    {
-      id: 'tab-security',
-      title: 'セキュリティ・電子署名（AATL検証）',
-      subtitle: 'パスワード暗号化、AATL認証局信頼チェーン検証',
-      category: 'security',
-      icon: <LockIcon size={14} />,
-      action: () => handleSelectTab('security'),
-    },
-    {
-      id: 'tab-tools',
-      title: 'プロダクションツール（PDF/X・プリフライト・最適化）',
-      subtitle: 'PDF/X-1a/X-4検証、アクセシビリティ自動修復、フォントアウトライン化',
-      category: 'tools',
-      icon: <ToolsIcon size={14} />,
-      action: () => handleSelectTab('tools'),
-    },
-    {
-      id: 'mode-text',
-      title: 'テキスト選択・インプレース直接編集モード',
-      subtitle: 'テキストブロックをダブルクリックしてその場でタイプ入力',
-      category: 'edit',
-      icon: <TypeIcon size={14} />,
-      action: () => setInteractiveMode('select-text'),
-    },
-    {
-      id: 'mode-redact',
-      title: 'ドラッグ黒塗り墨消しモード',
-      subtitle: '矩形ドラッグで機密情報を恒久的に抹消',
-      category: 'edit',
-      icon: <RedactIcon size={14} />,
-      action: () => setInteractiveMode('draw-redact'),
-    },
-    {
-      id: 'mode-highlight',
-      title: 'ハイライト描画モード',
-      subtitle: '矩形ドラッグで指定箇所を蛍光ペンハイライト',
-      category: 'annotate',
-      icon: <HighlightIcon size={14} />,
-      action: () => setInteractiveMode('draw-highlight'),
-    },
-    {
-      id: 'optimize',
-      title: 'PDF最適化・データ削減',
-      subtitle: '重複オブジェクト削除とストリーム再圧縮によるファイル縮小',
-      category: 'tools',
-      icon: <ZapIcon size={14} />,
-      action: () => {
-        handleSelectTab('tools')
-        if (pdfData) exec('optimize_pdf', {})
-      },
-    },
-    {
-      id: 'create-outlines',
-      title: 'テキストのアウトライン化（全フォントベクター化）',
-      subtitle: '印刷・入稿用に全テキストをベクターパスへ変換',
-      category: 'tools',
-      icon: <VectorPathIcon size={14} />,
-      action: () => handleSelectTab('tools'),
-    },
-    {
-      id: 'pdfx-validate',
-      title: 'PDF/X 入稿プリフライト検証',
-      subtitle: 'PDF/X-1a および PDF/X-4 規格適合性の詳細診断',
-      category: 'tools',
-      icon: <ShieldCheckIcon size={14} />,
-      action: () => handleSelectTab('tools'),
-    },
-    {
-      id: 'pdf-repair',
-      title: '破損PDFの自動修復・再構築',
-      subtitle: '不正XRef・オフセットズレ・構文エラーの全走査サルベージ',
-      category: 'tools',
-      icon: <ShieldCheckIcon size={14} />,
-      action: () => handleSelectTab('tools'),
-    },
-    {
-      id: 'scan-enhance',
-      title: 'スキャン書類の美化・傾き補正（Deskew）',
-      subtitle: '斜めスキャン回転補正と裏写り・影・黄ばみの純白化',
-      category: 'tools',
-      icon: <ZapIcon size={14} />,
-      action: () => handleSelectTab('tools'),
-    },
-    {
-      id: 'compare-pdf',
-      title: '2文書の差分比較（Compare Files）',
-      subtitle: '別バージョンPDFとのテキスト追加・削除・変更を照合検出',
-      category: 'tools',
-      icon: <ToolsIcon size={14} />,
-      action: () => handleSelectTab('tools'),
-    },
-  ]
+  const commandItems = useMemo(() => {
+    return buildEditorCommandItems({
+      onOpen: handleOpen,
+      onSave: handleSave,
+      onSelectTab: handleSelectTab,
+      onSetInteractiveMode: setInteractiveMode,
+      onExec: exec,
+      hasPdf: !!pdfData,
+    })
+  }, [handleOpen, handleSave, exec, pdfData])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg-0)' }}>

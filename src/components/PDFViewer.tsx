@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { DocumentService } from '../services/documentService'
+import { defaultRenderer } from '../services/pdfRenderer'
 import {
   FileIcon,
   RotateIcon, TrashIcon
@@ -121,17 +123,17 @@ export default function PDFViewer({
 
     const loadInfo = async () => {
       try {
-        const count = await invoke<number>('get_page_count', { data: pdfData })
+        const count = await DocumentService.getPageCount(pdfData)
         setPageCount(count)
         onPageCountChange?.(count)
 
-        const meta = await invoke<Record<string, unknown>>('get_pdf_metadata', { data: pdfData })
+        const meta = await DocumentService.getPdfMetadata(pdfData)
         setMetadata(meta)
 
-        const bms = await invoke<Bookmark[]>('get_bookmarks', { data: pdfData })
+        const bms = await DocumentService.getBookmarks(pdfData)
         setBookmarks(bms)
 
-        const fields = await invoke<FormField[]>('get_form_fields', { data: pdfData })
+        const fields = await DocumentService.getFormFields(pdfData)
         setFormFields(fields)
       } catch (err) {
         console.error('Failed to load PDF info:', err)
@@ -147,23 +149,16 @@ export default function PDFViewer({
 
     const loadPageData = async () => {
       try {
-        const dims = await invoke<{ width: number; height: number }>('get_page_dimensions', {
-          data: pdfData,
-          page_index: currentPage,
-        })
+        const dims = await DocumentService.getPageDimensions(pdfData, currentPage)
         if (dims && dims.width && dims.height) {
           setPageSize(dims)
         }
       } catch {
-        // Default A4
         setPageSize({ width: 595, height: 842 })
       }
 
       try {
-        const blocks = await invoke<TextBlock[]>('get_text_blocks', {
-          data: pdfData,
-          page_index: currentPage,
-        })
+        const blocks = await DocumentService.getTextBlocks(pdfData, currentPage)
         setTextBlocks(blocks || [])
       } catch {
         setTextBlocks([])
@@ -173,8 +168,7 @@ export default function PDFViewer({
     loadPageData()
   }, [pdfData, currentPage, pageCount])
 
-  // Render current page to PNG with Instant Cache
-  // Dynamic DPI based on zoom factor (150 base, up to 300 for CAD precision)
+  // Render current page using PDFRenderer with Instant Cache
   const targetDpi = Math.min(300, Math.max(120, Math.round(150 * Math.min(zoom, 2.0))))
 
   useEffect(() => {
@@ -194,31 +188,31 @@ export default function PDFViewer({
 
     const timer = setTimeout(async () => {
       try {
-        let pngData: number[]
+        let url: string
         if (isCustomSep) {
-          pngData = await invoke<number[]>('render_color_separation', {
-            data: pdfData,
-            page_index: currentPage,
+          url = await defaultRenderer.renderSeparationToUrl({
+            pdfData,
+            pageIndex: currentPage,
             dpi: targetDpi,
-            show_c: sepPlates.c,
-            show_m: sepPlates.m,
-            show_y: sepPlates.y,
-            show_k: sepPlates.k,
-            highlight_tac: sepPlates.tac,
-            tac_limit: tacLimit,
+            showC: sepPlates.c,
+            showM: sepPlates.m,
+            showY: sepPlates.y,
+            showK: sepPlates.k,
+            highlightTac: sepPlates.tac,
+            tacLimit,
           })
         } else {
-          pngData = await invoke<number[]>('render_page_to_png', {
-            data: pdfData,
-            page_index: currentPage,
+          url = await defaultRenderer.renderPageToUrl({
+            pdfData,
+            pageIndex: currentPage,
             dpi: targetDpi,
           })
         }
 
-        if (currentToken !== renderSeq.current) return
-
-        const blob = new Blob([new Uint8Array(pngData)], { type: 'image/png' })
-        const url = URL.createObjectURL(blob)
+        if (currentToken !== renderSeq.current) {
+          URL.revokeObjectURL(url)
+          return
+        }
 
         // Cache up to 16 rendered states in memory
         if (pageCache.current.size >= 16) {
@@ -230,7 +224,6 @@ export default function PDFViewer({
           }
         }
         pageCache.current.set(cacheKey, url)
-
         setPageImage(url)
       } catch (err) {
         if (currentToken === renderSeq.current) {
@@ -301,10 +294,7 @@ export default function PDFViewer({
     }
 
     try {
-      const results = await invoke<SearchResult[]>('search_text', {
-        data: pdfData,
-        query: searchQuery,
-      })
+      const results = await DocumentService.searchPdf(pdfData, searchQuery)
       setSearchResults(results)
     } catch (err) {
       console.error('Search failed:', err)
