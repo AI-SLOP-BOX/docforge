@@ -1,11 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { invoke } from '@tauri-apps/api/core'
 import { DocumentService } from '../services/documentService'
 import { defaultRenderer } from '../services/pdfRenderer'
-import {
-  FileIcon,
-  RotateIcon, TrashIcon
-} from './Icons'
+import { FileIcon } from './Icons'
 import {
   SearchResult, Bookmark, FormField,
 } from './PDFViewerPanels'
@@ -37,7 +33,9 @@ export type InteractiveMode =
   | 'place-form'
 
 export interface PDFViewerProps {
-  pdfData: number[]
+  pdfData: number[] | null
+  docId?: string | null
+  revision?: number
   currentPage?: number
   onPageCountChange?: (count: number) => void
   onPageChange?: (page: number) => void
@@ -51,6 +49,8 @@ export interface PDFViewerProps {
 
 export default function PDFViewer({
   pdfData,
+  docId,
+  revision = 0,
   currentPage: externalCurrentPage,
   onPageCountChange,
   onPageChange,
@@ -101,12 +101,20 @@ export default function PDFViewer({
   const pageCache = useRef<Map<string, string>>(new Map())
   const renderSeq = useRef(0)
 
-  // Clear cache when pdfData changes
+  // Clear cache when pdfData, docId, or revision changes
   useEffect(() => {
     // Revoke old object URLs
     pageCache.current.forEach(url => URL.revokeObjectURL(url))
     pageCache.current.clear()
-  }, [pdfData])
+  }, [pdfData, docId, revision])
+
+  // Prevent memory leaks: Revoke all object URLs when PDFViewer unmounts
+  useEffect(() => {
+    return () => {
+      pageCache.current.forEach(url => URL.revokeObjectURL(url))
+      pageCache.current.clear()
+    }
+  }, [])
 
   // Dragging / Drawing state on overlay
   const [draggingBlockId, setDraggingBlockId] = useState<number | null>(null)
@@ -117,23 +125,24 @@ export default function PDFViewer({
   const containerRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
 
-  // Load PDF info
+  // Load PDF info using docId (zero IPC bytes) or pdfData fallback
   useEffect(() => {
-    if (!pdfData || pdfData.length === 0) return
+    const handle = docId || (pdfData && pdfData.length > 0 ? pdfData : null)
+    if (!handle) return
 
     const loadInfo = async () => {
       try {
-        const count = await DocumentService.getPageCount(pdfData)
+        const count = await DocumentService.getPageCount(handle)
         setPageCount(count)
         onPageCountChange?.(count)
 
-        const meta = await DocumentService.getPdfMetadata(pdfData)
+        const meta = await DocumentService.getPdfMetadata(handle)
         setMetadata(meta)
 
-        const bms = await DocumentService.getBookmarks(pdfData)
+        const bms = await DocumentService.getBookmarks(handle)
         setBookmarks(bms)
 
-        const fields = await DocumentService.getFormFields(pdfData)
+        const fields = await DocumentService.getFormFields(handle)
         setFormFields(fields)
       } catch (err) {
         console.error('Failed to load PDF info:', err)
@@ -141,15 +150,16 @@ export default function PDFViewer({
     }
 
     loadInfo()
-  }, [pdfData, onPageCountChange])
+  }, [docId, pdfData, revision, onPageCountChange])
 
   // Load Page Dimensions and Text Blocks for current page
   useEffect(() => {
-    if (!pdfData || pdfData.length === 0 || currentPage >= pageCount) return
+    const handle = docId || (pdfData && pdfData.length > 0 ? pdfData : null)
+    if (!handle || currentPage >= pageCount) return
 
     const loadPageData = async () => {
       try {
-        const dims = await DocumentService.getPageDimensions(pdfData, currentPage)
+        const dims = await DocumentService.getPageDimensions(handle, currentPage)
         if (dims && dims.width && dims.height) {
           setPageSize(dims)
         }
@@ -158,7 +168,7 @@ export default function PDFViewer({
       }
 
       try {
-        const blocks = await DocumentService.getTextBlocks(pdfData, currentPage)
+        const blocks = await DocumentService.getTextBlocks(handle, currentPage)
         setTextBlocks(blocks || [])
       } catch {
         setTextBlocks([])
@@ -166,16 +176,17 @@ export default function PDFViewer({
     }
 
     loadPageData()
-  }, [pdfData, currentPage, pageCount])
+  }, [docId, pdfData, revision, currentPage, pageCount])
 
   // Render current page using PDFRenderer with Instant Cache
   const targetDpi = Math.min(300, Math.max(120, Math.round(150 * Math.min(zoom, 2.0))))
 
   useEffect(() => {
-    if (!pdfData || pdfData.length === 0 || currentPage >= pageCount) return
+    const hasSource = !!docId || (!!pdfData && pdfData.length > 0)
+    if (!hasSource || currentPage >= pageCount) return
 
     const isCustomSep = !sepPlates.c || !sepPlates.m || !sepPlates.y || !sepPlates.k || sepPlates.tac
-    const cacheKey = `${currentPage}@${targetDpi}_c${sepPlates.c ? 1 : 0}m${sepPlates.m ? 1 : 0}y${sepPlates.y ? 1 : 0}k${sepPlates.k ? 1 : 0}tac${sepPlates.tac ? 1 : 0}_${tacLimit}`
+    const cacheKey = `${docId || 'data'}_${revision}@${currentPage}@${targetDpi}_c${sepPlates.c ? 1 : 0}m${sepPlates.m ? 1 : 0}y${sepPlates.y ? 1 : 0}k${sepPlates.k ? 1 : 0}tac${sepPlates.tac ? 1 : 0}_${tacLimit}`
     const cachedUrl = pageCache.current.get(cacheKey)
     if (cachedUrl) {
       setPageImage(cachedUrl)
@@ -191,7 +202,8 @@ export default function PDFViewer({
         let url: string
         if (isCustomSep) {
           url = await defaultRenderer.renderSeparationToUrl({
-            pdfData,
+            docId: docId || undefined,
+            pdfData: docId ? undefined : (pdfData || undefined),
             pageIndex: currentPage,
             dpi: targetDpi,
             showC: sepPlates.c,
@@ -203,7 +215,8 @@ export default function PDFViewer({
           })
         } else {
           url = await defaultRenderer.renderPageToUrl({
-            pdfData,
+            docId: docId || undefined,
+            pdfData: docId ? undefined : (pdfData || undefined),
             pageIndex: currentPage,
             dpi: targetDpi,
           })
@@ -238,7 +251,7 @@ export default function PDFViewer({
     }, zoom !== 1.0 ? 80 : 0)
 
     return () => clearTimeout(timer)
-  }, [pdfData, currentPage, pageCount, targetDpi, sepPlates, tacLimit])
+  }, [docId, pdfData, revision, currentPage, pageCount, targetDpi, sepPlates, tacLimit])
 
   // Update image rendered dimensions
   const handleImageLoad = () => {
@@ -286,20 +299,23 @@ export default function PDFViewer({
     setPan({ x: 0, y: 0 })
   }, [pageCount, onPageChange])
 
-  // Search
+  // Search using docId (zero IPC bytes) or pdfData fallback
   const handleSearch = useCallback(async () => {
     if (!searchQuery.trim()) {
       setSearchResults([])
       return
     }
 
+    const handle = docId || (pdfData && pdfData.length > 0 ? pdfData : null)
+    if (!handle) return
+
     try {
-      const results = await DocumentService.searchPdf(pdfData, searchQuery)
+      const results = await DocumentService.searchPdf(handle, searchQuery)
       setSearchResults(results)
     } catch (err) {
       console.error('Search failed:', err)
     }
-  }, [pdfData, searchQuery])
+  }, [docId, pdfData, searchQuery])
 
   // Keyboard shortcuts
   useEffect(() => {

@@ -228,23 +228,28 @@ fn remap_references(obj: &mut Object, id_map: &std::collections::HashMap<OID, OI
     }
 }
 
-pub fn delete_page(data: &[u8], page_index: usize) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
-    let page_ids = get_page_ids(&doc);
+pub fn delete_page_in_doc(doc: &mut Document, page_index: usize) -> Result<(), String> {
+    let page_ids = get_page_ids(doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
     }
     let page_id = page_ids[page_index];
-    let mut kids = get_kids(&mut doc).unwrap_or_default();
+    let mut kids = get_kids(doc).unwrap_or_default();
     if page_index < kids.len() {
         kids.remove(page_index);
     }
     doc.objects.remove(&page_id);
-    let pages_id = ensure_page_root(&mut doc);
+    let pages_id = ensure_page_root(doc);
     if let Some(Object::Dictionary(ref mut pages_dict)) = doc.objects.get_mut(&pages_id) {
         pages_dict.set("Kids", Object::Array(kids.clone()));
         pages_dict.set("Count", Object::Integer(kids.len() as i64));
     }
+    Ok(())
+}
+
+pub fn delete_page(data: &[u8], page_index: usize) -> Result<Vec<u8>, String> {
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
+    delete_page_in_doc(&mut doc, page_index)?;
     save_doc(&mut doc)
 }
 

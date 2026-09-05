@@ -17,7 +17,7 @@ interface PDFViewerOverlayProps {
   setEditingBlockId: (id: number | null) => void
   editingTextVal: string
   setEditingTextVal: (val: string) => void
-  pdfData: number[]
+  pdfData: number[] | null
   currentPage: number
   onPdfUpdate?: (data: number[]) => void
   imgRenderedSize: { width: number; height: number }

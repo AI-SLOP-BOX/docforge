@@ -203,9 +203,8 @@ pub fn get_page_text(data: &[u8], page_index: usize) -> Result<String, String> {
     Ok(text)
 }
 
-pub fn search_text(data: &[u8], query: &str) -> Result<Vec<serde_json::Value>, String> {
-    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
-    let page_ids = get_page_ids(&doc);
+pub fn search_text_in_doc(doc: &Document, query: &str) -> Result<Vec<serde_json::Value>, String> {
+    let page_ids = get_page_ids(doc);
     let mut results = Vec::new();
 
     for (i, &page_id) in page_ids.iter().enumerate() {
@@ -243,9 +242,12 @@ pub fn search_text(data: &[u8], query: &str) -> Result<Vec<serde_json::Value>, S
     Ok(results)
 }
 
-pub fn get_bookmarks(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
+pub fn search_text(data: &[u8], query: &str) -> Result<Vec<serde_json::Value>, String> {
     let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
+    search_text_in_doc(&doc, query)
+}
 
+pub fn get_bookmarks_from_doc(doc: &Document) -> Result<Vec<serde_json::Value>, String> {
     let mut bookmarks = Vec::new();
 
     let root_id = match doc.trailer.get(b"Root").and_then(|o| o.as_reference()) {
@@ -287,9 +289,12 @@ pub fn get_bookmarks(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
     Ok(bookmarks)
 }
 
-pub fn get_form_fields(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
+pub fn get_bookmarks(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
     let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
+    get_bookmarks_from_doc(&doc)
+}
 
+pub fn get_form_fields_from_doc(doc: &Document) -> Result<Vec<serde_json::Value>, String> {
     let mut fields = Vec::new();
 
     let root_id = match doc.trailer.get(b"Root").and_then(|o| o.as_reference()) {
@@ -352,6 +357,11 @@ pub fn get_form_fields(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
     }
 
     Ok(fields)
+}
+
+pub fn get_form_fields(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
+    get_form_fields_from_doc(&doc)
 }
 
 pub fn set_form_field(data: &[u8], field_name: &str, value: &str) -> Result<Vec<u8>, String> {
@@ -519,10 +529,8 @@ pub fn print_pdf(data: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-pub fn get_pdf_metadata(data: &[u8]) -> Result<serde_json::Value, String> {
-    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
-
-    let page_count = get_page_ids(&doc).len();
+pub fn get_pdf_metadata_from_doc(doc: &Document) -> Result<serde_json::Value, String> {
+    let page_count = get_page_ids(doc).len();
 
     let mut title = String::new();
     let mut author = String::new();
@@ -542,7 +550,15 @@ pub fn get_pdf_metadata(data: &[u8]) -> Result<serde_json::Value, String> {
         "page_count": page_count,
         "title": title,
         "author": author,
-        "size": data.len(),
         "version": doc.version,
     }))
+}
+
+pub fn get_pdf_metadata(data: &[u8]) -> Result<serde_json::Value, String> {
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut val = get_pdf_metadata_from_doc(&doc)?;
+    if let Some(obj) = val.as_object_mut() {
+        obj.insert("size".to_string(), serde_json::json!(data.len()));
+    }
+    Ok(val)
 }

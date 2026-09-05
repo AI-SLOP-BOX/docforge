@@ -119,3 +119,30 @@ pub fn pdf_to_powerpoint(data: Vec<u8>, output_path: String) -> Result<(), Strin
 pub fn create_pdf_portfolio(file_paths: Vec<String>, output_path: String) -> Result<(), String> {
     pdf_engine::create_pdf_portfolio(&file_paths, &output_path)
 }
+
+#[tauri::command]
+pub fn add_header_footer(
+    data: Vec<u8>,
+    header_text: String,
+    footer_text: String,
+    font_size: f32,
+    margin: f32,
+) -> Result<Vec<u8>, String> {
+    pdf_engine::add_header_footer(&data, &header_text, &footer_text, font_size, margin)
+}
+
+#[tauri::command]
+pub fn add_bookmark(data: Vec<u8>, title: String, page_index: usize) -> Result<Vec<u8>, String> {
+    pdf_engine::add_bookmark(&data, &title, page_index)
+}
+
+#[tauri::command]
+pub fn add_bates_number(
+    data: Vec<u8>,
+    prefix: String,
+    start_number: usize,
+    font_size: f32,
+    margin: f32,
+) -> Result<Vec<u8>, String> {
+    pdf_engine::add_bates_number(&data, &prefix, start_number, font_size, margin)
+}

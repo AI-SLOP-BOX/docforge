@@ -17,9 +17,8 @@ pub struct TextBlock {
 }
 
 // Get all text blocks on a page for direct editing
-pub fn get_text_blocks(data: &[u8], page_index: usize) -> Result<Vec<TextBlock>, String> {
-    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
-    let page_ids = get_page_ids(&doc);
+pub fn get_text_blocks_from_doc(doc: &Document, page_index: usize) -> Result<Vec<TextBlock>, String> {
+    let page_ids = get_page_ids(doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
     }
@@ -139,6 +138,11 @@ pub fn get_text_blocks(data: &[u8], page_index: usize) -> Result<Vec<TextBlock>,
     }
 
     Ok(blocks)
+}
+
+pub fn get_text_blocks(data: &[u8], page_index: usize) -> Result<Vec<TextBlock>, String> {
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
+    get_text_blocks_from_doc(&doc, page_index)
 }
 
 // Edit a specific text block

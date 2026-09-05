@@ -127,39 +127,79 @@ export class DocumentService {
   }
 
   /**
-   * Inspection queries
+   * Get undo/redo availability and metrics for active session.
    */
-  static async getPageCount(data: number[]): Promise<number> {
-    return invoke<number>('get_page_count', { data })
+  static async getHistoryStatus(docId: string): Promise<{
+    can_undo: boolean
+    can_redo: boolean
+    undo_count: number
+    redo_count: number
+    history_bytes: number
+  }> {
+    return invoke('session_get_history_status', { docId })
   }
 
-  static async getPageDimensions(data: number[], pageIndex: number): Promise<PageDimensions> {
+  /**
+   * Session-based Inspection & Query (Zero IPC byte passing)
+   */
+  static async getPageCount(docIdOrData: string | number[]): Promise<number> {
+    if (typeof docIdOrData === 'string') {
+      return invoke<number>('session_get_page_count', { docId: docIdOrData })
+    }
+    return invoke<number>('get_page_count', { data: docIdOrData })
+  }
+
+  static async getPageDimensions(docIdOrData: string | number[], pageIndex: number): Promise<PageDimensions> {
+    if (typeof docIdOrData === 'string') {
+      return invoke<PageDimensions>('session_get_page_dimensions', {
+        docId: docIdOrData,
+        pageIndex,
+      })
+    }
     return invoke<PageDimensions>('get_page_dimensions', {
-      data,
+      data: docIdOrData,
       page_index: pageIndex,
     })
   }
 
-  static async getTextBlocks(data: number[], pageIndex: number): Promise<TextBlock[]> {
+  static async getTextBlocks(docIdOrData: string | number[], pageIndex: number): Promise<TextBlock[]> {
+    if (typeof docIdOrData === 'string') {
+      return invoke<TextBlock[]>('session_get_text_blocks', {
+        docId: docIdOrData,
+        pageIndex,
+      })
+    }
     return invoke<TextBlock[]>('get_text_blocks', {
-      data,
+      data: docIdOrData,
       page_index: pageIndex,
     })
   }
 
-  static async getPdfMetadata(data: number[]): Promise<Record<string, unknown>> {
-    return invoke<Record<string, unknown>>('get_pdf_metadata', { data })
+  static async getPdfMetadata(docIdOrData: string | number[]): Promise<Record<string, unknown>> {
+    if (typeof docIdOrData === 'string') {
+      return invoke<Record<string, unknown>>('session_get_metadata', { docId: docIdOrData })
+    }
+    return invoke<Record<string, unknown>>('get_pdf_metadata', { data: docIdOrData })
   }
 
-  static async getBookmarks(data: number[]): Promise<Bookmark[]> {
-    return invoke<Bookmark[]>('get_bookmarks', { data })
+  static async getBookmarks(docIdOrData: string | number[]): Promise<Bookmark[]> {
+    if (typeof docIdOrData === 'string') {
+      return invoke<Bookmark[]>('session_get_bookmarks', { docId: docIdOrData })
+    }
+    return invoke<Bookmark[]>('get_bookmarks', { data: docIdOrData })
   }
 
-  static async getFormFields(data: number[]): Promise<FormField[]> {
-    return invoke<FormField[]>('get_form_fields', { data })
+  static async getFormFields(docIdOrData: string | number[]): Promise<FormField[]> {
+    if (typeof docIdOrData === 'string') {
+      return invoke<FormField[]>('session_get_form_fields', { docId: docIdOrData })
+    }
+    return invoke<FormField[]>('get_form_fields', { data: docIdOrData })
   }
 
-  static async searchPdf(data: number[], query: string): Promise<SearchResult[]> {
-    return invoke<SearchResult[]>('search_text', { data, query })
+  static async searchPdf(docIdOrData: string | number[], query: string): Promise<SearchResult[]> {
+    if (typeof docIdOrData === 'string') {
+      return invoke<SearchResult[]>('session_search_text', { docId: docIdOrData, query })
+    }
+    return invoke<SearchResult[]>('search_text', { data: docIdOrData, query })
   }
 }

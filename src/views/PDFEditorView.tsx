@@ -29,13 +29,39 @@ import { buildEditorCommandItems } from '../components/editorCommands'
 type Tab = 'edit' | 'annotate' | 'forms' | 'organize' | 'pages' | 'security' | 'text' | 'tools'
 
 export default function PDFEditorView() {
-  const { data: pdfData, setData: setPdfData, pushHistory, undo, redo, canUndo, canRedo } = useHistory(null, 30)
+  const { data: pdfData, setData: setPdfData, pushHistory, undo: fallbackUndo, redo: fallbackRedo, canUndo: fallbackCanUndo, canRedo: fallbackCanRedo } = useHistory(null, 30)
   const { toast, toastType, showToast, showError, showSuccess } = useToast(2800)
+
+  const [docId, setDocId] = useState<string | null>(null)
+  const [revision, setRevision] = useState(0)
+  const [sessionCanUndo, setSessionCanUndo] = useState(false)
+  const [sessionCanRedo, setSessionCanRedo] = useState(false)
 
   const [fileName, setFileName] = useState('')
   const [pageCount, setPageCount] = useState(0)
   const [currentPage, setCurrentPage] = useState(0)
   const [activeTab, setActiveTab] = useState<Tab | null>('edit')
+
+  // Refresh history capability status whenever revision or docId changes
+  const refreshHistoryStatus = useCallback(async (activeId: string) => {
+    try {
+      const status = await DocumentService.getHistoryStatus(activeId)
+      setSessionCanUndo(status.can_undo)
+      setSessionCanRedo(status.can_redo)
+    } catch {
+      setSessionCanUndo(false)
+      setSessionCanRedo(false)
+    }
+  }, [])
+
+  // Cleanup session on unmount
+  useEffect(() => {
+    return () => {
+      if (docId) {
+        DocumentService.closeSession(docId).catch(() => {})
+      }
+    }
+  }, [docId])
 
   // Interactive canvas state
   const [interactiveMode, setInteractiveMode] = useState<InteractiveMode>('view')
@@ -75,25 +101,79 @@ export default function PDFEditorView() {
     try {
       const res = await DocumentService.openFileDialog()
       if (!res) return
+
+      // If previous session exists, close it
+      if (docId) {
+        await DocumentService.closeSession(docId).catch(() => {})
+      }
+
+      // Initialize DocumentSession in Rust backend with per-doc lock
+      const newDocId = await DocumentService.createSession(res.bytes)
+      setDocId(newDocId)
+      setRevision(r => r + 1)
       setPdfData(res.bytes)
       setFileName(res.name)
       pushHistory(res.bytes)
+
+      await refreshHistoryStatus(newDocId)
       showSuccess(t().pdfLoaded)
     } catch (err) {
       showError(formatError(err, 'PDFの読み込みに失敗しました'))
     }
-  }, [pushHistory, setPdfData, showError, showSuccess])
+  }, [docId, pushHistory, refreshHistoryStatus, setPdfData, showError, showSuccess])
 
   const handleSave = useCallback(async () => {
-    if (!pdfData) return
+    if (!docId && !pdfData) return
     try {
-      const path = await DocumentService.saveFileDialog(fileName, pdfData)
+      // If docId is active, serialize directly from backend session
+      const bytesToSave = docId
+        ? await DocumentService.getSessionBytes(docId)
+        : (pdfData as number[])
+
+      const path = await DocumentService.saveFileDialog(fileName, bytesToSave)
       if (!path) return
       showSuccess(t().savedSuccess)
     } catch (err) {
       showError(formatError(err, 'PDFの保存に失敗しました'))
     }
-  }, [pdfData, fileName, showError, showSuccess])
+  }, [docId, pdfData, fileName, showError, showSuccess])
+
+  const handleUndo = useCallback(async () => {
+    if (docId) {
+      try {
+        const ok = await DocumentService.undo(docId)
+        if (ok) {
+          setRevision(r => r + 1)
+          await refreshHistoryStatus(docId)
+          showSuccess(t().undo)
+        }
+      } catch (err) {
+        showError(formatError(err, 'Undoに失敗しました'))
+      }
+    } else {
+      fallbackUndo()
+    }
+  }, [docId, fallbackUndo, refreshHistoryStatus, showError, showSuccess])
+
+  const handleRedo = useCallback(async () => {
+    if (docId) {
+      try {
+        const ok = await DocumentService.redo(docId)
+        if (ok) {
+          setRevision(r => r + 1)
+          await refreshHistoryStatus(docId)
+          showSuccess(t().redo)
+        }
+      } catch (err) {
+        showError(formatError(err, 'Redoに失敗しました'))
+      }
+    } else {
+      fallbackRedo()
+    }
+  }, [docId, fallbackRedo, refreshHistoryStatus, showError, showSuccess])
+
+  const canUndo = docId ? sessionCanUndo : fallbackCanUndo
+  const canRedo = docId ? sessionCanRedo : fallbackCanRedo
 
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
 
@@ -108,24 +188,54 @@ export default function PDFEditorView() {
         }
         if (e.key === 'o') { e.preventDefault(); handleOpen() }
         if (e.key === 's') { e.preventDefault(); handleSave() }
-        if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo() }
-        if ((e.key === 'z' && e.shiftKey) || e.key === 'y') { e.preventDefault(); redo() }
+        if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); handleUndo() }
+        if ((e.key === 'z' && e.shiftKey) || e.key === 'y') { e.preventDefault(); handleRedo() }
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [handleOpen, handleSave, undo, redo])
+  }, [handleOpen, handleSave, handleUndo, handleRedo])
 
   const exec = useCallback(async (cmd: string, args: Record<string, unknown>) => {
-    if (!pdfData) return
+    if (!docId && !pdfData) return
     try {
-      const result = await invoke<number[]>(cmd, { data: pdfData, ...args })
+      if (docId) {
+        // Fast paths for rotation and page deletion using DocumentSession
+        if (cmd === 'rotate_page') {
+          const pIdx = (args.page_index as number) ?? currentPage
+          const deg = (args.degrees as number) ?? 90
+          await DocumentService.rotatePage(docId, pIdx, deg)
+          setRevision(r => r + 1)
+          await refreshHistoryStatus(docId)
+          showSuccess(t().completed)
+          return
+        } else if (cmd === 'delete_page') {
+          const pIdx = (args.page_index as number) ?? currentPage
+          await DocumentService.deletePage(docId, pIdx)
+          setRevision(r => r + 1)
+          await refreshHistoryStatus(docId)
+          showSuccess(t().completed)
+          return
+        }
+      }
+
+      // For standard command tools, run and sync session
+      const currentBytes = docId ? await DocumentService.getSessionBytes(docId) : (pdfData as number[])
+      const result = await invoke<number[]>(cmd, { data: currentBytes, ...args })
+
+      if (docId) {
+        await DocumentService.closeSession(docId).catch(() => {})
+        const newId = await DocumentService.createSession(result)
+        setDocId(newId)
+        setRevision(r => r + 1)
+        await refreshHistoryStatus(newId)
+      }
       pushHistory(result)
       showSuccess(t().completed)
     } catch (err) {
       showError(formatError(err, 'コマンド実行に失敗しました'))
     }
-  }, [pdfData, pushHistory, showError, showSuccess])
+  }, [docId, pdfData, currentPage, pushHistory, refreshHistoryStatus, showError, showSuccess])
 
   // Canvas Rect draw handler
   const handleDrawRectComplete = useCallback(async (rect: { x: number; y: number; width: number; height: number; page: number }) => {
@@ -251,8 +361,8 @@ export default function PDFEditorView() {
         onSave={handleSave}
         onPrint={() => pdfData && invoke('print_pdf', { data: pdfData })}
         canSave={!!pdfData}
-        undo={undo}
-        redo={redo}
+        undo={handleUndo}
+        redo={handleRedo}
         canUndo={canUndo}
         canRedo={canRedo}
         interactiveMode={interactiveMode}
@@ -380,6 +490,8 @@ export default function PDFEditorView() {
           {pdfData ? (
             <PDFViewer
               pdfData={pdfData}
+              docId={docId}
+              revision={revision}
               currentPage={currentPage}
               onPageCountChange={setPageCount}
               onPageChange={setCurrentPage}

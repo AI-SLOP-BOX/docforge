@@ -1,6 +1,7 @@
 pub mod commands_advanced;
 pub mod commands_io;
 pub mod commands_prod;
+pub mod commands_session;
 pub mod commands_text;
 pub mod image_engine;
 pub mod ocr_engine;
@@ -9,6 +10,7 @@ pub mod session;
 pub use commands_advanced::*;
 pub use commands_io::*;
 pub use commands_prod::*;
+pub use commands_session::*;
 pub use commands_text::*;
 
 // ===== PDF CORE =====
@@ -216,38 +218,7 @@ fn redact_text(data: Vec<u8>, search_text: String, replacement: String) -> Resul
     pdf_engine::redact_text(&data, &search_text, &replacement)
 }
 
-// ===== HEADERS & FOOTERS =====
 
-#[tauri::command]
-fn add_header_footer(
-    data: Vec<u8>,
-    header_text: String,
-    footer_text: String,
-    font_size: f32,
-    margin: f32,
-) -> Result<Vec<u8>, String> {
-    pdf_engine::add_header_footer(&data, &header_text, &footer_text, font_size, margin)
-}
-
-// ===== BOOKMARKS =====
-
-#[tauri::command]
-fn add_bookmark(data: Vec<u8>, title: String, page_index: usize) -> Result<Vec<u8>, String> {
-    pdf_engine::add_bookmark(&data, &title, page_index)
-}
-
-// ===== BATES NUMBERING =====
-
-#[tauri::command]
-fn add_bates_number(
-    data: Vec<u8>,
-    prefix: String,
-    start_number: usize,
-    font_size: f32,
-    margin: f32,
-) -> Result<Vec<u8>, String> {
-    pdf_engine::add_bates_number(&data, &prefix, start_number, font_size, margin)
-}
 
 // ===== OPTIMIZE =====
 
@@ -586,6 +557,16 @@ pub fn run() {
             session_delete_page,
             session_undo,
             session_redo,
+            session_get_history_status,
+            session_get_page_count,
+            session_get_page_dimensions,
+            session_get_text_blocks,
+            session_get_metadata,
+            session_get_bookmarks,
+            session_get_form_fields,
+            session_search_text,
+            session_render_page_to_png,
+            session_render_color_separation,
         ])
         .manage(session::SessionManager::new())
         .run(tauri::generate_context!())
