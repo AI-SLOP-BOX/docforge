@@ -3,7 +3,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
-const MAX_UNDO_BYTES_PER_DOC: usize = 512 * 1024 * 1024; // 512MB per document
+// Soft memory limit for undo/redo snapshots per document.
+// Eviction drops oldest history when exceeded, but always preserves at least 1 undo state
+// so that single large documents (>512MB) do not immediately lose undo capability.
+const TARGET_HISTORY_MEMORY_PER_DOC: usize = 512 * 1024 * 1024; // 512MB target threshold
 
 #[derive(Clone)]
 pub enum EditCommand {
@@ -52,6 +55,18 @@ impl DocumentSession {
         }
     }
 
+    /// Mutate the inner Document with automatic cache invalidation and dirty marking.
+    /// This prevents cache consistency bugs when modifying the document model.
+    pub fn mutate<F, R>(&mut self, f: F) -> Result<R, String>
+    where
+        F: FnOnce(&mut lopdf::Document) -> Result<R, String>,
+    {
+        let result = f(&mut self.doc)?;
+        self.dirty = true;
+        self.cached_bytes = None;
+        Ok(result)
+    }
+
     pub fn push_undo(&mut self, cmd: EditCommand) {
         self.push_undo_internal(cmd, true);
     }
@@ -76,9 +91,9 @@ impl DocumentSession {
     }
 
     fn evict_oldest_history(&mut self) {
-        // Evict oldest entries from undo_stack if total undo + redo exceeds MAX_UNDO_BYTES_PER_DOC
-        // Keep at least 1 entry so that huge files (>512MB) still retain their immediate undo
-        while self.total_history_bytes > MAX_UNDO_BYTES_PER_DOC && self.undo_stack.len() > 1 {
+        // Evict oldest entries from undo_stack if total undo + redo exceeds target threshold.
+        // Keep at least 1 entry so that large files (>512MB) still retain their immediate undo.
+        while self.total_history_bytes > TARGET_HISTORY_MEMORY_PER_DOC && self.undo_stack.len() > 1 {
             let evicted = self.undo_stack.remove(0);
             self.total_history_bytes = self.total_history_bytes.saturating_sub(evicted.byte_size());
         }

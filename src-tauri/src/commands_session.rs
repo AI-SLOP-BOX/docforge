@@ -54,7 +54,7 @@ pub fn session_rotate_page(
     };
 
     let new_rot = (current_rot + degrees).rem_euclid(360);
-    crate::pdf_engine::rotate_page_in_doc(&mut session.doc, page_index, degrees)?;
+    session.mutate(|doc| crate::pdf_engine::rotate_page_in_doc(doc, page_index, degrees))?;
 
     session.push_undo(crate::session::EditCommand::RotatePage {
         page: page_index,
@@ -77,8 +77,8 @@ pub fn session_delete_page(
     // 1. Take snapshot before modification
     let snapshot = session.save_to_bytes()?;
 
-    // 2. Perform deletion on document model
-    crate::pdf_engine::delete_page_in_doc(&mut session.doc, page_index)?;
+    // 2. Perform deletion on document model via mutate (auto-invalidates cache)
+    session.mutate(|doc| crate::pdf_engine::delete_page_in_doc(doc, page_index))?;
 
     // 3. Only if deletion succeeded, push undo snapshot
     session.push_undo(crate::session::EditCommand::FullSnapshot {
