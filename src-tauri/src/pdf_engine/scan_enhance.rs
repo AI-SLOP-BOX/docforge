@@ -1,6 +1,6 @@
+use super::common::*;
 use image::{DynamicImage, GenericImageView, ImageBuffer, Luma, Rgb, Rgba};
 use lopdf::{Document, Object, Stream};
-use super::common::*;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ScanEnhanceOptions {
@@ -25,17 +25,26 @@ pub fn enhance_scanned_pdf(data: &[u8], options: &ScanEnhanceOptions) -> Result<
             let dict = page.as_dict().map_err(|_| "Page is not dict")?;
             let res = dict.get(b"Resources").ok().and_then(|r| match r {
                 Object::Dictionary(d) => Some(d.clone()),
-                Object::Reference(id) => doc.objects.get(id).and_then(|o| o.as_dict().ok()).cloned(),
+                Object::Reference(id) => {
+                    doc.objects.get(id).and_then(|o| o.as_dict().ok()).cloned()
+                }
                 _ => None,
             });
 
-            let xobjects = res.and_then(|r| r.get(b"XObject").ok().and_then(|x| match x {
-                Object::Dictionary(d) => Some(d.clone()),
-                Object::Reference(id) => doc.objects.get(id).and_then(|o| o.as_dict().ok()).cloned(),
-                _ => None,
-            }));
+            let xobjects = res.and_then(|r| {
+                r.get(b"XObject").ok().and_then(|x| match x {
+                    Object::Dictionary(d) => Some(d.clone()),
+                    Object::Reference(id) => {
+                        doc.objects.get(id).and_then(|o| o.as_dict().ok()).cloned()
+                    }
+                    _ => None,
+                })
+            });
 
-            let contents_id = dict.get(b"Contents").ok().and_then(|c| c.as_reference().ok());
+            let contents_id = dict
+                .get(b"Contents")
+                .ok()
+                .and_then(|c| c.as_reference().ok());
             (xobjects, contents_id)
         };
 
@@ -43,7 +52,9 @@ pub fn enhance_scanned_pdf(data: &[u8], options: &ScanEnhanceOptions) -> Result<
             for (_, val) in xobj_dict.iter() {
                 if let Object::Reference(img_id) = val {
                     if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(img_id) {
-                        let is_image = stream.dict.get(b"Subtype")
+                        let is_image = stream
+                            .dict
+                            .get(b"Subtype")
                             .map(|s| s == &Object::Name(b"Image".to_vec()))
                             .unwrap_or(false);
 
@@ -64,9 +75,20 @@ pub fn enhance_scanned_pdf(data: &[u8], options: &ScanEnhanceOptions) -> Result<
     save_doc(&mut doc)
 }
 
-fn enhance_raw_image_stream(stream: &mut Stream, options: &ScanEnhanceOptions) -> Result<Vec<u8>, ()> {
-    let width = stream.dict.get(b"Width").and_then(|w| w.as_i64()).unwrap_or(0) as u32;
-    let height = stream.dict.get(b"Height").and_then(|h| h.as_i64()).unwrap_or(0) as u32;
+fn enhance_raw_image_stream(
+    stream: &mut Stream,
+    options: &ScanEnhanceOptions,
+) -> Result<Vec<u8>, ()> {
+    let width = stream
+        .dict
+        .get(b"Width")
+        .and_then(|w| w.as_i64())
+        .unwrap_or(0) as u32;
+    let height = stream
+        .dict
+        .get(b"Height")
+        .and_then(|h| h.as_i64())
+        .unwrap_or(0) as u32;
     if width == 0 || height == 0 {
         return Err(());
     }
@@ -112,7 +134,9 @@ fn enhance_raw_image_stream(stream: &mut Stream, options: &ScanEnhanceOptions) -
 
     // Re-encode back to stream
     let out_buf = luma.into_raw();
-    stream.dict.set("ColorSpace", Object::Name(b"DeviceGray".to_vec()));
+    stream
+        .dict
+        .set("ColorSpace", Object::Name(b"DeviceGray".to_vec()));
     stream.dict.set("BitsPerComponent", Object::Integer(8));
     stream.dict.set("Width", Object::Integer(w as i64));
     stream.dict.set("Height", Object::Integer(h as i64));
@@ -160,10 +184,14 @@ fn detect_skew_angle(img: &DynamicImage) -> f32 {
 
         // Calculate variance of projection
         let mean = row_sums.iter().sum::<u64>() as f64 / sample_h as f64;
-        let var = row_sums.iter().map(|&v| {
-            let diff = v as f64 - mean;
-            diff * diff
-        }).sum::<f64>() / sample_h as f64;
+        let var = row_sums
+            .iter()
+            .map(|&v| {
+                let diff = v as f64 - mean;
+                diff * diff
+            })
+            .sum::<f64>()
+            / sample_h as f64;
 
         if var > max_variance {
             max_variance = var;
@@ -176,7 +204,11 @@ fn detect_skew_angle(img: &DynamicImage) -> f32 {
 }
 
 /// Adaptive background normalization and bleed-through removal
-fn adaptive_background_normalization(img: &mut ImageBuffer<Luma<u8>, Vec<u8>>, contrast_boost: f32, binarize: bool) {
+fn adaptive_background_normalization(
+    img: &mut ImageBuffer<Luma<u8>, Vec<u8>>,
+    contrast_boost: f32,
+    binarize: bool,
+) {
     let (w, h) = img.dimensions();
     let block_size = 24u32;
 

@@ -1,5 +1,5 @@
-use lopdf::{Document, Object};
 use super::common::*;
+use lopdf::{Document, Object};
 
 #[derive(serde::Serialize)]
 pub struct PreflightIssue {
@@ -46,8 +46,7 @@ pub struct ImageCheck {
 
 // Preflight check for print production
 pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let mut issues = Vec::new();
     let mut total_fonts = 0;
@@ -61,7 +60,8 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
                 if font_type == b"Font" {
                     total_fonts += 1;
 
-                    let font_name = dict.get(b"BaseFont")
+                    let font_name = dict
+                        .get(b"BaseFont")
                         .ok()
                         .and_then(|o| match o {
                             Object::Name(bytes) => Some(String::from_utf8_lossy(bytes).to_string()),
@@ -69,7 +69,10 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
                         })
                         .unwrap_or_else(|| "Unknown".into());
 
-                    if dict.get(b"FontFile").is_ok() || dict.get(b"FontFile2").is_ok() || dict.get(b"FontFile3").is_ok() {
+                    if dict.get(b"FontFile").is_ok()
+                        || dict.get(b"FontFile2").is_ok()
+                        || dict.get(b"FontFile3").is_ok()
+                    {
                         embedded_fonts.push(font_name.clone());
                     } else {
                         non_embedded_fonts.push(font_name.clone());
@@ -139,8 +142,9 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
         }
     }
 
-    let score = 100 - (issues.iter().filter(|i| i.severity == "error").count() as u32 * 10)
-                  - (issues.iter().filter(|i| i.severity == "warning").count() as u32 * 5);
+    let score = 100
+        - (issues.iter().filter(|i| i.severity == "error").count() as u32 * 10)
+        - (issues.iter().filter(|i| i.severity == "warning").count() as u32 * 5);
 
     Ok(PreflightResult {
         passed: issues.iter().filter(|i| i.severity == "error").count() == 0,
@@ -171,8 +175,7 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
 
 // Check ink coverage for CMYK
 pub fn check_ink_coverage(data: &[u8], page_index: usize) -> Result<serde_json::Value, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -190,8 +193,17 @@ pub fn check_ink_coverage(data: &[u8], page_index: usize) -> Result<serde_json::
                         match op.operator.as_str() {
                             "k" => {
                                 if op.operands.len() >= 4 {
-                                    if let (Object::Real(c), Object::Real(m), Object::Real(y), Object::Real(k)) = 
-                                        (&op.operands[0], &op.operands[1], &op.operands[2], &op.operands[3]) {
+                                    if let (
+                                        Object::Real(c),
+                                        Object::Real(m),
+                                        Object::Real(y),
+                                        Object::Real(k),
+                                    ) = (
+                                        &op.operands[0],
+                                        &op.operands[1],
+                                        &op.operands[2],
+                                        &op.operands[3],
+                                    ) {
                                         let coverage = c + m + y + k;
                                         max_coverage = max_coverage.max(coverage);
                                         coverage_samples.push(coverage);
@@ -200,8 +212,17 @@ pub fn check_ink_coverage(data: &[u8], page_index: usize) -> Result<serde_json::
                             }
                             "K" => {
                                 if op.operands.len() >= 4 {
-                                    if let (Object::Real(c), Object::Real(m), Object::Real(y), Object::Real(k)) = 
-                                        (&op.operands[0], &op.operands[1], &op.operands[2], &op.operands[3]) {
+                                    if let (
+                                        Object::Real(c),
+                                        Object::Real(m),
+                                        Object::Real(y),
+                                        Object::Real(k),
+                                    ) = (
+                                        &op.operands[0],
+                                        &op.operands[1],
+                                        &op.operands[2],
+                                        &op.operands[3],
+                                    ) {
                                         let coverage = c + m + y + k;
                                         max_coverage = max_coverage.max(coverage);
                                         coverage_samples.push(coverage);
@@ -269,7 +290,8 @@ pub fn convert_fonts_to_outlines(data: &[u8]) -> Result<Vec<u8>, String> {
 
             if let Ok(back_out) = convert_back {
                 if back_out.status.success() && temp_out.exists() {
-                    let outlined_bytes = std::fs::read(&temp_out).map_err(|e| format!("Failed to read outlined PDF: {e}"))?;
+                    let outlined_bytes = std::fs::read(&temp_out)
+                        .map_err(|e| format!("Failed to read outlined PDF: {e}"))?;
                     let _ = std::fs::remove_file(&temp_out);
                     return Ok(outlined_bytes);
                 }
@@ -281,8 +303,7 @@ pub fn convert_fonts_to_outlines(data: &[u8]) -> Result<Vec<u8>, String> {
         }
     }
 
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     for (_, obj) in doc.objects.iter_mut() {
         if let Object::Dictionary(dict) = obj {

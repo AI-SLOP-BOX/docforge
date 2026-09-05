@@ -153,7 +153,7 @@ fn protect_pdf(data: Vec<u8>, password: String) -> Result<Vec<u8>, String> {
 #[tauri::command]
 fn compare_pdfs(data1: Vec<u8>, data2: Vec<u8>) -> Result<serde_json::Value, String> {
     let result = pdf_engine::compare_pdfs(&data1, &data2)?;
-    Ok(serde_json::to_value(result).unwrap())
+    serde_json::to_value(result).map_err(|e| e.to_string())
 }
 
 // ===== PDF RENDERING =====
@@ -240,7 +240,7 @@ fn process_scanned_images(paths: Vec<String>, remove_shadow: bool, correct_persp
 #[tauri::command]
 fn ocr_files(paths: Vec<String>, language: String) -> Result<serde_json::Value, String> {
     let result = ocr_engine::ocr_files(&paths, &language)?;
-    Ok(serde_json::to_value(result).unwrap())
+    serde_json::to_value(result).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -8,12 +8,19 @@ pub fn convert_to_pdfx(data: Vec<u8>, output_intent: String) -> Result<Vec<u8>, 
 }
 
 #[tauri::command]
-pub fn convert_to_pdfx_standard(data: Vec<u8>, standard: String, output_intent: String) -> Result<Vec<u8>, String> {
+pub fn convert_to_pdfx_standard(
+    data: Vec<u8>,
+    standard: String,
+    output_intent: String,
+) -> Result<Vec<u8>, String> {
     pdf_engine::convert_to_pdfx_standard(&data, &standard, &output_intent)
 }
 
 #[tauri::command]
-pub fn validate_pdfx_compliance(data: Vec<u8>, target_standard: String) -> Result<pdf_engine::PdfxValidationReport, String> {
+pub fn validate_pdfx_compliance(
+    data: Vec<u8>,
+    target_standard: String,
+) -> Result<pdf_engine::PdfxValidationReport, String> {
     pdf_engine::validate_pdfx_compliance(&data, &target_standard)
 }
 
@@ -23,7 +30,11 @@ pub fn check_accessibility(data: Vec<u8>) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-pub fn fix_accessibility_issues(data: Vec<u8>, default_title: String, default_lang: String) -> Result<Vec<u8>, String> {
+pub fn fix_accessibility_issues(
+    data: Vec<u8>,
+    default_title: String,
+    default_lang: String,
+) -> Result<Vec<u8>, String> {
     pdf_engine::fix_accessibility_issues(&data, &default_title, &default_lang)
 }
 
@@ -95,7 +106,7 @@ pub fn downsample_images(data: Vec<u8>, target_dpi: u32, quality: u8) -> Result<
 }
 
 #[tauri::command]
-pub fn remove_metadata(data: Vec<u8>,) -> Result<Vec<u8>, String> {
+pub fn remove_metadata(data: Vec<u8>) -> Result<Vec<u8>, String> {
     pdf_engine::remove_metadata(&data)
 }
 
@@ -105,11 +116,17 @@ pub fn repair_corrupt_pdf(data: Vec<u8>) -> Result<Vec<u8>, String> {
 }
 
 #[tauri::command]
-pub fn enhance_scanned_pdf(data: Vec<u8>, options: pdf_engine::ScanEnhanceOptions) -> Result<Vec<u8>, String> {
+pub fn enhance_scanned_pdf(
+    data: Vec<u8>,
+    options: pdf_engine::ScanEnhanceOptions,
+) -> Result<Vec<u8>, String> {
     pdf_engine::enhance_scanned_pdf(&data, &options)
 }
 
 #[tauri::command]
-pub fn compare_pdf_documents(original: Vec<u8>, revised: Vec<u8>) -> Result<pdf_engine::CompareReport, String> {
+pub fn compare_pdf_documents(
+    original: Vec<u8>,
+    revised: Vec<u8>,
+) -> Result<pdf_engine::CompareReport, String> {
     pdf_engine::compare_pdf_documents(&original, &revised)
 }

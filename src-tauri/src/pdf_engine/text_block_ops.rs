@@ -1,6 +1,6 @@
-use lopdf::{Document, Object, Stream, Dictionary};
 use super::common::*;
 use super::reflow::get_char_metric_width;
+use lopdf::{Dictionary, Document, Object, Stream};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct TextBlock {
@@ -18,8 +18,7 @@ pub struct TextBlock {
 
 // Get all text blocks on a page for direct editing
 pub fn get_text_blocks(data: &[u8], page_index: usize) -> Result<Vec<TextBlock>, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -75,8 +74,9 @@ pub fn get_text_blocks(data: &[u8], page_index: usize) -> Result<Vec<TextBlock>,
                                 text_buffer.clear();
                             }
                             "Tf" => {
-                                if let (Some(Object::Name(font)), Some(Object::Real(size))) = 
-                                    (op.operands.first(), op.operands.get(1)) {
+                                if let (Some(Object::Name(font)), Some(Object::Real(size))) =
+                                    (op.operands.first(), op.operands.get(1))
+                                {
                                     current_font = String::from_utf8_lossy(font).to_string();
                                     current_size = *size;
                                 }
@@ -92,16 +92,18 @@ pub fn get_text_blocks(data: &[u8], page_index: usize) -> Result<Vec<TextBlock>,
                                 }
                             }
                             "Td" | "TD" => {
-                                if let (Some(Object::Real(dx)), Some(Object::Real(dy))) = 
-                                    (op.operands.first(), op.operands.get(1)) {
+                                if let (Some(Object::Real(dx)), Some(Object::Real(dy))) =
+                                    (op.operands.first(), op.operands.get(1))
+                                {
                                     current_x += dx;
                                     current_y += dy;
                                 }
                             }
                             "rg" => {
                                 if op.operands.len() >= 3 {
-                                    if let (Object::Real(r), Object::Real(g), Object::Real(b)) = 
-                                        (&op.operands[0], &op.operands[1], &op.operands[2]) {
+                                    if let (Object::Real(r), Object::Real(g), Object::Real(b)) =
+                                        (&op.operands[0], &op.operands[1], &op.operands[2])
+                                    {
                                         let ri = (r * 255.0) as u8;
                                         let gi = (g * 255.0) as u8;
                                         let bi = (b * 255.0) as u8;
@@ -121,7 +123,8 @@ pub fn get_text_blocks(data: &[u8], page_index: usize) -> Result<Vec<TextBlock>,
                                     if let Some(Object::Array(arr)) = op.operands.first() {
                                         for item in arr {
                                             if let Object::String(bytes, _) = item {
-                                                text_buffer.push_str(&String::from_utf8_lossy(bytes));
+                                                text_buffer
+                                                    .push_str(&String::from_utf8_lossy(bytes));
                                             }
                                         }
                                     }
@@ -145,8 +148,7 @@ pub fn edit_text_block(
     block_id: usize,
     new_text: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -155,7 +157,9 @@ pub fn edit_text_block(
     let page_id = page_ids[page_index];
 
     let content_id = if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
-        dict.get(b"Contents").ok().and_then(|o| o.as_reference().ok())
+        dict.get(b"Contents")
+            .ok()
+            .and_then(|o| o.as_reference().ok())
     } else {
         None
     };
@@ -191,9 +195,13 @@ pub fn edit_text_block(
             "ET" => {
                 if in_text && current_block == block_id {
                     if !block_replaced {
-                        new_operations.push(lopdf::content::Operation::new("Tj", vec![
-                            Object::String(new_text.as_bytes().to_vec(), lopdf::StringFormat::Literal)
-                        ]));
+                        new_operations.push(lopdf::content::Operation::new(
+                            "Tj",
+                            vec![Object::String(
+                                new_text.as_bytes().to_vec(),
+                                lopdf::StringFormat::Literal,
+                            )],
+                        ));
                         block_replaced = true;
                     }
                     current_block += 1;
@@ -213,9 +221,13 @@ pub fn edit_text_block(
                 }
                 if in_target_block {
                     if !block_replaced {
-                        new_operations.push(lopdf::content::Operation::new("Tj", vec![
-                            Object::String(new_text.as_bytes().to_vec(), lopdf::StringFormat::Literal)
-                        ]));
+                        new_operations.push(lopdf::content::Operation::new(
+                            "Tj",
+                            vec![Object::String(
+                                new_text.as_bytes().to_vec(),
+                                lopdf::StringFormat::Literal,
+                            )],
+                        ));
                         block_replaced = true;
                     }
                 } else {
@@ -234,9 +246,13 @@ pub fn edit_text_block(
                 }
                 if in_target_block {
                     if !block_replaced {
-                        new_operations.push(lopdf::content::Operation::new("Tj", vec![
-                            Object::String(new_text.as_bytes().to_vec(), lopdf::StringFormat::Literal)
-                        ]));
+                        new_operations.push(lopdf::content::Operation::new(
+                            "Tj",
+                            vec![Object::String(
+                                new_text.as_bytes().to_vec(),
+                                lopdf::StringFormat::Literal,
+                            )],
+                        ));
                         block_replaced = true;
                     }
                 } else {
@@ -249,7 +265,9 @@ pub fn edit_text_block(
         }
     }
 
-    let content = lopdf::content::Content { operations: new_operations };
+    let content = lopdf::content::Content {
+        operations: new_operations,
+    };
     let content_bytes = content.encode().map_err(|e| format!("Encode error: {e}"))?;
 
     let mut stream = Stream::new(Dictionary::new(), content_bytes);
@@ -271,8 +289,7 @@ pub fn move_text_block(
     new_x: f32,
     new_y: f32,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -281,7 +298,9 @@ pub fn move_text_block(
     let page_id = page_ids[page_index];
 
     let content_id = if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
-        dict.get(b"Contents").ok().and_then(|o| o.as_reference().ok())
+        dict.get(b"Contents")
+            .ok()
+            .and_then(|o| o.as_reference().ok())
     } else {
         None
     };
@@ -318,22 +337,34 @@ pub fn move_text_block(
             }
             "Tm" => {
                 if in_text && current_block == block_id {
-                    new_operations.push(lopdf::content::Operation::new("Tm", vec![
-                        Object::Real(1.0), Object::Real(0.0),
-                        Object::Real(0.0), Object::Real(1.0),
-                        Object::Real(new_x), Object::Real(new_y),
-                    ]));
+                    new_operations.push(lopdf::content::Operation::new(
+                        "Tm",
+                        vec![
+                            Object::Real(1.0),
+                            Object::Real(0.0),
+                            Object::Real(0.0),
+                            Object::Real(1.0),
+                            Object::Real(new_x),
+                            Object::Real(new_y),
+                        ],
+                    ));
                 } else {
                     new_operations.push(op.clone());
                 }
             }
             "Td" | "TD" => {
                 if in_text && current_block == block_id {
-                    new_operations.push(lopdf::content::Operation::new("Tm", vec![
-                        Object::Real(1.0), Object::Real(0.0),
-                        Object::Real(0.0), Object::Real(1.0),
-                        Object::Real(new_x), Object::Real(new_y),
-                    ]));
+                    new_operations.push(lopdf::content::Operation::new(
+                        "Tm",
+                        vec![
+                            Object::Real(1.0),
+                            Object::Real(0.0),
+                            Object::Real(0.0),
+                            Object::Real(1.0),
+                            Object::Real(new_x),
+                            Object::Real(new_y),
+                        ],
+                    ));
                 } else {
                     new_operations.push(op.clone());
                 }
@@ -350,7 +381,9 @@ pub fn move_text_block(
         }
     }
 
-    let content = lopdf::content::Content { operations: new_operations };
+    let content = lopdf::content::Content {
+        operations: new_operations,
+    };
     let content_bytes = content.encode().map_err(|e| format!("Encode error: {e}"))?;
 
     let mut stream = Stream::new(Dictionary::new(), content_bytes);
@@ -370,8 +403,7 @@ pub fn delete_text_block(
     page_index: usize,
     block_id: usize,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -380,7 +412,9 @@ pub fn delete_text_block(
     let page_id = page_ids[page_index];
 
     let content_id = if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
-        dict.get(b"Contents").ok().and_then(|o| o.as_reference().ok())
+        dict.get(b"Contents")
+            .ok()
+            .and_then(|o| o.as_reference().ok())
     } else {
         None
     };
@@ -424,7 +458,9 @@ pub fn delete_text_block(
         }
     }
 
-    let content = lopdf::content::Content { operations: new_operations };
+    let content = lopdf::content::Content {
+        operations: new_operations,
+    };
     let content_bytes = content.encode().map_err(|e| format!("Encode error: {e}"))?;
 
     let mut stream = Stream::new(Dictionary::new(), content_bytes);

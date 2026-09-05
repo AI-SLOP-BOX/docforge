@@ -1,5 +1,5 @@
-use lopdf::{Document, Object, Dictionary};
 use super::common::*;
+use lopdf::{Dictionary, Document, Object};
 
 // ===== DIGITAL SIGNATURE =====
 
@@ -14,8 +14,7 @@ pub fn add_digital_signature(
     reason: &str,
     _certificate_data: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -26,16 +25,37 @@ pub fn add_digital_signature(
     sig_dict.set("Type", Object::Name("Sig".into()));
     sig_dict.set("Filter", Object::Name("Adobe.PPKLite".into()));
     sig_dict.set("SubFilter", Object::Name("adbe.pkcs7.detached".into()));
-    sig_dict.set("ByteRange", Object::Array(vec![
-        Object::Integer(0),
-        Object::Integer(0),
-        Object::Integer(0),
-        Object::Integer(0),
-    ]));
-    sig_dict.set("Contents", Object::String(vec![0u8; 4096], lopdf::StringFormat::Hexadecimal));
-    sig_dict.set("Reason", Object::String(reason.as_bytes().to_vec(), lopdf::StringFormat::Literal));
-    sig_dict.set("M", Object::String(b"D:20260830120000+00'00'".to_vec(), lopdf::StringFormat::Literal));
-    sig_dict.set("Name", Object::String(signer_name.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+    sig_dict.set(
+        "ByteRange",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(0),
+        ]),
+    );
+    sig_dict.set(
+        "Contents",
+        Object::String(vec![0u8; 4096], lopdf::StringFormat::Hexadecimal),
+    );
+    sig_dict.set(
+        "Reason",
+        Object::String(reason.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+    );
+    sig_dict.set(
+        "M",
+        Object::String(
+            b"D:20260830120000+00'00'".to_vec(),
+            lopdf::StringFormat::Literal,
+        ),
+    );
+    sig_dict.set(
+        "Name",
+        Object::String(
+            signer_name.as_bytes().to_vec(),
+            lopdf::StringFormat::Literal,
+        ),
+    );
 
     let sig_id = doc.add_object(Object::Dictionary(sig_dict));
 
@@ -44,12 +64,20 @@ pub fn add_digital_signature(
     field_dict.set("Type", Object::Name("Annot".into()));
     field_dict.set("Subtype", Object::Name("Widget".into()));
     field_dict.set("FT", Object::Name("Sig".into()));
-    field_dict.set("T", Object::String(b"Signature1".to_vec(), lopdf::StringFormat::Literal));
+    field_dict.set(
+        "T",
+        Object::String(b"Signature1".to_vec(), lopdf::StringFormat::Literal),
+    );
     field_dict.set("V", Object::Reference(sig_id));
-    field_dict.set("Rect", Object::Array(vec![
-        Object::Real(x as f32), Object::Real(y as f32),
-        Object::Real((x + width) as f32), Object::Real((y + height) as f32),
-    ]));
+    field_dict.set(
+        "Rect",
+        Object::Array(vec![
+            Object::Real(x as f32),
+            Object::Real(y as f32),
+            Object::Real((x + width) as f32),
+            Object::Real((y + height) as f32),
+        ]),
+    );
 
     let field_id = doc.add_object(Object::Dictionary(field_dict));
 
@@ -65,7 +93,9 @@ pub fn add_digital_signature(
     }
 
     // Add to AcroForm
-    let root_id = doc.trailer.get(b"Root")
+    let root_id = doc
+        .trailer
+        .get(b"Root")
         .and_then(|o| o.as_reference())
         .ok()
         .ok_or("No root")?;
@@ -100,12 +130,8 @@ pub fn add_digital_signature(
     save_doc(&mut doc)
 }
 
-pub fn verify_signature(
-    data: &[u8],
-    _signature_index: usize,
-) -> Result<serde_json::Value, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+pub fn verify_signature(data: &[u8], _signature_index: usize) -> Result<serde_json::Value, String> {
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     // Find signature fields
     let mut signatures = Vec::new();
@@ -114,32 +140,42 @@ pub fn verify_signature(
         if let Object::Dictionary(dict) = obj {
             if let Ok(Object::Name(ft)) = dict.get(b"FT") {
                 if ft == b"Sig" {
-                    let name = dict.get(b"T")
+                    let name = dict
+                        .get(b"T")
                         .ok()
                         .and_then(|o| match o {
-                            Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).to_string()),
+                            Object::String(bytes, _) => {
+                                Some(String::from_utf8_lossy(bytes).to_string())
+                            }
                             _ => None,
                         })
                         .unwrap_or_default();
 
-                    let reason = dict.get(b"Reason")
+                    let reason = dict
+                        .get(b"Reason")
                         .ok()
                         .and_then(|o| match o {
-                            Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).to_string()),
+                            Object::String(bytes, _) => {
+                                Some(String::from_utf8_lossy(bytes).to_string())
+                            }
                             _ => None,
                         })
                         .unwrap_or_default();
 
-                    let signer = dict.get(b"Name")
+                    let signer = dict
+                        .get(b"Name")
                         .ok()
                         .and_then(|o| match o {
-                            Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).to_string()),
+                            Object::String(bytes, _) => {
+                                Some(String::from_utf8_lossy(bytes).to_string())
+                            }
                             _ => None,
                         })
                         .unwrap_or_default();
 
                     // Check for Adobe.PPKLite and PKCS#7 format
-                    let filter = dict.get(b"Filter")
+                    let filter = dict
+                        .get(b"Filter")
                         .ok()
                         .and_then(|o| match o {
                             Object::Name(bytes) => Some(String::from_utf8_lossy(bytes).to_string()),
@@ -147,7 +183,8 @@ pub fn verify_signature(
                         })
                         .unwrap_or_else(|| "Adobe.PPKLite".to_string());
 
-                    let sub_filter = dict.get(b"SubFilter")
+                    let sub_filter = dict
+                        .get(b"SubFilter")
                         .ok()
                         .and_then(|o| match o {
                             Object::Name(bytes) => Some(String::from_utf8_lossy(bytes).to_string()),
@@ -157,7 +194,12 @@ pub fn verify_signature(
 
                     // Global Trust List (AATL/EUTL) trust chain simulation and validation:
                     // Recognizes major global trust providers (DigiCert, GlobalSign, Seiko, Sectigo)
-                    let is_aatl = signer.contains("AATL") || signer.contains("GlobalSign") || signer.contains("DigiCert") || signer.contains("DocForge") || signer.contains("Seiko") || signer.is_empty();
+                    let is_aatl = signer.contains("AATL")
+                        || signer.contains("GlobalSign")
+                        || signer.contains("DigiCert")
+                        || signer.contains("DocForge")
+                        || signer.contains("Seiko")
+                        || signer.is_empty();
                     let cert_issuer = if signer.contains("GlobalSign") {
                         "GlobalSign CA for AATL - R3"
                     } else if signer.contains("DigiCert") {
@@ -193,7 +235,6 @@ pub fn verify_signature(
     }))
 }
 
-
 // ===== HARDWARE TOKEN (PKCS#11 STUB) =====
 
 pub struct HardwareToken {
@@ -207,15 +248,13 @@ pub struct HardwareToken {
 pub fn detect_hardware_tokens() -> Result<Vec<HardwareToken>, String> {
     // Stub: In production, this would use PKCS#11 library
     // to enumerate available tokens
-    let tokens = vec![
-        HardwareToken {
-            slot_id: 0,
-            label: "Software Token".to_string(),
-            manufacturer: "DocForge".to_string(),
-            serial: "00000000".to_string(),
-            initialized: true,
-        },
-    ];
+    let tokens = vec![HardwareToken {
+        slot_id: 0,
+        label: "Software Token".to_string(),
+        manufacturer: "DocForge".to_string(),
+        serial: "00000000".to_string(),
+        initialized: true,
+    }];
 
     Ok(tokens)
 }
@@ -240,7 +279,17 @@ pub fn sign_with_hardware_token(
     // 5. Create PKCS#7 signature
 
     // For now, use software signing
-    add_digital_signature(data, page_index, x, y, width, height, signer_name, reason, None)
+    add_digital_signature(
+        data,
+        page_index,
+        x,
+        y,
+        width,
+        height,
+        signer_name,
+        reason,
+        None,
+    )
 }
 
 pub fn verify_hardware_token_signature(
@@ -251,14 +300,12 @@ pub fn verify_hardware_token_signature(
     verify_signature(data, 0)
 }
 
-
 // ===== PDF UNLOCK (PASSWORD REMOVAL) =====
 
 pub fn unlock_pdf(data: &[u8], _password: &str) -> Result<Vec<u8>, String> {
     // lopdf doesn't support password-protected PDFs natively
     // Try to load and remove encryption
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to unlock: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to unlock: {e}"))?;
 
     // Remove encryption dictionary from trailer
     doc.trailer.remove(b"Encrypt");
@@ -295,7 +342,9 @@ pub fn sanitize_document(data: &[u8]) -> Result<(Vec<u8>, SanitizeSummary), Stri
         summary.metadata_removed = true;
     }
 
-    let root_id = doc.trailer.get(b"Root")
+    let root_id = doc
+        .trailer
+        .get(b"Root")
         .and_then(|o| o.as_reference())
         .ok()
         .ok_or("No root in PDF trailer")?;
@@ -348,7 +397,10 @@ pub fn sanitize_document(data: &[u8]) -> Result<(Vec<u8>, SanitizeSummary), Stri
     for (&id, obj) in &doc.objects {
         if let Object::Dictionary(dict) = obj {
             if let Ok(Object::Name(type_name)) = dict.get(b"Type") {
-                if type_name == b"Metadata" || type_name == b"JavaScript" || type_name == b"EmbeddedFile" {
+                if type_name == b"Metadata"
+                    || type_name == b"JavaScript"
+                    || type_name == b"EmbeddedFile"
+                {
                     keys_to_remove.push(id);
                 }
             }
@@ -365,8 +417,6 @@ pub fn sanitize_document(data: &[u8]) -> Result<(Vec<u8>, SanitizeSummary), Stri
     Ok((clean_bytes, summary))
 }
 
-
-
 // ===== DIGITAL ID MANAGEMENT =====
 
 #[derive(serde::Serialize)]
@@ -380,18 +430,15 @@ pub struct DigitalID {
 
 pub fn list_digital_ids() -> Result<Vec<DigitalID>, String> {
     // Stub: In production, this would read from system certificate store
-    let ids = vec![
-        DigitalID {
-            name: "Sample Digital ID".to_string(),
-            issuer: "CN=Test CA, O=Test Org".to_string(),
-            valid_from: "2024-01-01".to_string(),
-            valid_to: "2025-12-31".to_string(),
-            key_usage: vec!["digitalSignature".to_string(), "nonRepudiation".to_string()],
-        }
-    ];
+    let ids = vec![DigitalID {
+        name: "Sample Digital ID".to_string(),
+        issuer: "CN=Test CA, O=Test Org".to_string(),
+        valid_from: "2024-01-01".to_string(),
+        valid_to: "2025-12-31".to_string(),
+        key_usage: vec!["digitalSignature".to_string(), "nonRepudiation".to_string()],
+    }];
     Ok(ids)
 }
-
 
 // ===== TIMESTAMP & VALIDATION =====
 
@@ -404,21 +451,20 @@ pub struct TimestampResult {
 }
 
 // Add timestamp to PDF
-pub fn add_timestamp(
-    data: &[u8],
-    _timestamp_authority: &str,
-) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+pub fn add_timestamp(data: &[u8], _timestamp_authority: &str) -> Result<Vec<u8>, String> {
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     // Create timestamp dictionary
     let mut ts_dict = Dictionary::new();
     ts_dict.set("Type", Object::Name("DocTimeStamp".into()));
     ts_dict.set("F", Object::Integer(1)); // Signatures exist
-    ts_dict.set("M", Object::String(
-        "2024-01-01T00:00:00Z".as_bytes().to_vec(),
-        lopdf::StringFormat::Literal,
-    ));
+    ts_dict.set(
+        "M",
+        Object::String(
+            "2024-01-01T00:00:00Z".as_bytes().to_vec(),
+            lopdf::StringFormat::Literal,
+        ),
+    );
 
     // In production, this would:
     // 1. Connect to TSA (Time Stamp Authority)
@@ -428,7 +474,9 @@ pub fn add_timestamp(
     let ts_id = doc.add_object(Object::Dictionary(ts_dict));
 
     // Add to AcroForm
-    let root_id = doc.trailer.get(b"Root")
+    let root_id = doc
+        .trailer
+        .get(b"Root")
         .and_then(|o| o.as_reference())
         .ok()
         .ok_or("No root")?;
@@ -442,8 +490,7 @@ pub fn add_timestamp(
 
 // Verify timestamp
 pub fn verify_timestamp(data: &[u8]) -> Result<TimestampResult, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     // Look for timestamp in document
     let mut timestamp = None;
@@ -484,23 +531,21 @@ pub struct Certificate {
 pub fn list_certificates() -> Result<Vec<Certificate>, String> {
     // In production, this would read from system certificate store
     // For now, return sample certificates
-    let certs = vec![
-        Certificate {
-            subject: "CN=DocForge Signing Certificate".into(),
-            issuer: "CN=DocForge CA".into(),
-            valid_from: "2024-01-01".into(),
-            valid_to: "2025-12-31".into(),
-            serial: "00:11:22:33:44:55:66:77".into(),
-            key_usage: vec!["digitalSignature".into(), "nonRepudiation".into()],
-        }
-    ];
+    let certs = vec![Certificate {
+        subject: "CN=DocForge Signing Certificate".into(),
+        issuer: "CN=DocForge CA".into(),
+        valid_from: "2024-01-01".into(),
+        valid_to: "2025-12-31".into(),
+        serial: "00:11:22:33:44:55:66:77".into(),
+        key_usage: vec!["digitalSignature".into(), "nonRepudiation".into()],
+    }];
     Ok(certs)
 }
 
 // Import certificate from file
 pub fn import_certificate(cert_path: &str) -> Result<Certificate, String> {
-    let _cert_data = std::fs::read(cert_path)
-        .map_err(|e| format!("Failed to read certificate: {e}"))?;
+    let _cert_data =
+        std::fs::read(cert_path).map_err(|e| format!("Failed to read certificate: {e}"))?;
 
     // In production, this would parse the X.509 certificate
     // For now, return a placeholder

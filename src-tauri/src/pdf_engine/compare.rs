@@ -1,5 +1,5 @@
-use lopdf::{Document, Object};
 use super::common::*;
+use lopdf::{Document, Object};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct DiffItem {
@@ -27,10 +27,10 @@ pub struct CompareReport {
 /// Professional semantic & graphical document comparison.
 /// Compares text blocks across pages and detects changes, additions, and deletions.
 pub fn compare_pdf_documents(original: &[u8], revised: &[u8]) -> Result<CompareReport, String> {
-    let doc_orig = Document::load_mem(original)
-        .map_err(|e| format!("Failed to parse original PDF: {e}"))?;
-    let doc_rev = Document::load_mem(revised)
-        .map_err(|e| format!("Failed to parse revised PDF: {e}"))?;
+    let doc_orig =
+        Document::load_mem(original).map_err(|e| format!("Failed to parse original PDF: {e}"))?;
+    let doc_rev =
+        Document::load_mem(revised).map_err(|e| format!("Failed to parse revised PDF: {e}"))?;
 
     let orig_pages = get_page_ids(&doc_orig);
     let rev_pages = get_page_ids(&doc_rev);
@@ -168,7 +168,9 @@ fn extract_page_text(doc: &Document, page_id: OID) -> Vec<SimpleTextBlock> {
                         match op.operator.as_str() {
                             "Td" | "TD" => {
                                 if op.operands.len() >= 2 {
-                                    if let (Ok(dx), Ok(dy)) = (op.operands[0].as_float(), op.operands[1].as_float()) {
+                                    if let (Ok(dx), Ok(dy)) =
+                                        (op.operands[0].as_float(), op.operands[1].as_float())
+                                    {
                                         current_x += dx;
                                         current_y += dy;
                                     }
@@ -176,7 +178,9 @@ fn extract_page_text(doc: &Document, page_id: OID) -> Vec<SimpleTextBlock> {
                             }
                             "Tm" => {
                                 if op.operands.len() >= 6 {
-                                    if let (Ok(tx), Ok(ty)) = (op.operands[4].as_float(), op.operands[5].as_float()) {
+                                    if let (Ok(tx), Ok(ty)) =
+                                        (op.operands[4].as_float(), op.operands[5].as_float())
+                                    {
                                         current_x = tx;
                                         current_y = ty;
                                     }
@@ -184,7 +188,9 @@ fn extract_page_text(doc: &Document, page_id: OID) -> Vec<SimpleTextBlock> {
                             }
                             "Tj" => {
                                 if let Some(s) = op.operands.first().and_then(|o| match o {
-                                    Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).to_string()),
+                                    Object::String(bytes, _) => {
+                                        Some(String::from_utf8_lossy(bytes).to_string())
+                                    }
                                     _ => None,
                                 }) {
                                     let str_len = s.chars().count() as f32;

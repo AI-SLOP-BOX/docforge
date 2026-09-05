@@ -1,10 +1,11 @@
-use lopdf::{Document, Object, Stream, Dictionary};
+use lopdf::{Dictionary, Document, Object, Stream};
 
 pub type OID = (u32, u16);
 
 pub(crate) fn save_doc(doc: &mut Document) -> Result<Vec<u8>, String> {
     let mut buf = Vec::new();
-    doc.save_to(&mut buf).map_err(|e| format!("Failed to save: {e}"))?;
+    doc.save_to(&mut buf)
+        .map_err(|e| format!("Failed to save: {e}"))?;
     Ok(buf)
 }
 
@@ -40,7 +41,13 @@ pub(crate) fn get_page_dimensions(doc: &Document, page_id: OID) -> (f32, f32) {
 pub(crate) fn get_kids(doc: &Document) -> Option<Vec<Object>> {
     let root_id = doc.trailer.get(b"Root").ok()?.as_reference().ok()?;
     let root = doc.objects.get(&root_id)?;
-    let pages_ref = root.as_dict().ok()?.get(b"Pages").ok()?.as_reference().ok()?;
+    let pages_ref = root
+        .as_dict()
+        .ok()?
+        .get(b"Pages")
+        .ok()?
+        .as_reference()
+        .ok()?;
     let pages = doc.objects.get(&pages_ref)?;
     match pages.as_dict().ok()?.get(b"Kids") {
         Ok(Object::Array(kids)) => Some(kids.clone()),
@@ -107,9 +114,12 @@ pub(crate) fn get_page_count(doc: &Document) -> usize {
 pub(crate) fn parse_hex_color(color: &str, default: (f32, f32, f32)) -> (f32, f32, f32) {
     let s = color.trim().trim_start_matches('#');
     if s.len() >= 6 {
-        let r = u8::from_str_radix(&s[0..2], 16).unwrap_or((default.0 * 255.0) as u8) as f32 / 255.0;
-        let g = u8::from_str_radix(&s[2..4], 16).unwrap_or((default.1 * 255.0) as u8) as f32 / 255.0;
-        let b = u8::from_str_radix(&s[4..6], 16).unwrap_or((default.2 * 255.0) as u8) as f32 / 255.0;
+        let r =
+            u8::from_str_radix(&s[0..2], 16).unwrap_or((default.0 * 255.0) as u8) as f32 / 255.0;
+        let g =
+            u8::from_str_radix(&s[2..4], 16).unwrap_or((default.1 * 255.0) as u8) as f32 / 255.0;
+        let b =
+            u8::from_str_radix(&s[4..6], 16).unwrap_or((default.2 * 255.0) as u8) as f32 / 255.0;
         (r, g, b)
     } else {
         default
@@ -149,14 +159,13 @@ pub fn merge_pdfs(paths: &[String]) -> Result<Vec<u8>, String> {
         return Err("No files to merge".into());
     }
 
-    let mut base = Document::load(&paths[0])
-        .map_err(|e| format!("Failed to load {}: {e}", paths[0]))?;
+    let mut base =
+        Document::load(&paths[0]).map_err(|e| format!("Failed to load {}: {e}", paths[0]))?;
 
     let mut kids = get_kids(&mut base).unwrap_or_default();
 
     for path in &paths[1..] {
-        let other = Document::load(path)
-            .map_err(|e| format!("Failed to load {path}: {e}"))?;
+        let other = Document::load(path).map_err(|e| format!("Failed to load {path}: {e}"))?;
 
         let other_page_ids = get_page_ids(&other);
 
@@ -220,8 +229,7 @@ fn remap_references(obj: &mut Object, id_map: &std::collections::HashMap<OID, OI
 }
 
 pub fn delete_page(data: &[u8], page_index: usize) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -241,8 +249,7 @@ pub fn delete_page(data: &[u8], page_index: usize) -> Result<Vec<u8>, String> {
 }
 
 pub fn rotate_page(data: &[u8], page_index: usize, degrees: i32) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -259,8 +266,7 @@ pub fn rotate_page(data: &[u8], page_index: usize, degrees: i32) -> Result<Vec<u
 }
 
 pub fn reorder_pages(data: &[u8], from_index: usize, to_index: usize) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let mut kids = get_kids(&mut doc).unwrap_or_default();
     if from_index >= kids.len() || to_index >= kids.len() {
         return Err("Page index out of range".into());
@@ -276,8 +282,7 @@ pub fn reorder_pages(data: &[u8], from_index: usize, to_index: usize) -> Result<
 }
 
 pub fn extract_pages(data: &[u8], indices: &[usize]) -> Result<Vec<u8>, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     let mut new_doc = Document::with_version("1.7");
     let mut new_kids = Vec::new();
@@ -304,8 +309,7 @@ pub fn extract_pages(data: &[u8], indices: &[usize]) -> Result<Vec<u8>, String> 
 }
 
 pub fn duplicate_page(data: &[u8], page_index: usize) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -339,8 +343,7 @@ pub fn add_text(
     size: f64,
     color: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -350,15 +353,28 @@ pub fn add_text(
 
     let operations = vec![
         lopdf::content::Operation::new("BT", vec![]),
-        lopdf::content::Operation::new("Tf", vec![Object::Name("Helvetica".into()), Object::Real(size as f32)]),
-        lopdf::content::Operation::new("rg", vec![Object::Real(r), Object::Real(g), Object::Real(b)]),
+        lopdf::content::Operation::new(
+            "Tf",
+            vec![Object::Name("Helvetica".into()), Object::Real(size as f32)],
+        ),
+        lopdf::content::Operation::new(
+            "rg",
+            vec![Object::Real(r), Object::Real(g), Object::Real(b)],
+        ),
         lopdf::content::Operation::new("Td", vec![Object::Real(x as f32), Object::Real(y as f32)]),
-        lopdf::content::Operation::new("Tj", vec![Object::String(text.as_bytes().to_vec(), lopdf::StringFormat::Literal)]),
+        lopdf::content::Operation::new(
+            "Tj",
+            vec![Object::String(
+                text.as_bytes().to_vec(),
+                lopdf::StringFormat::Literal,
+            )],
+        ),
         lopdf::content::Operation::new("ET", vec![]),
     ];
 
     let content = lopdf::content::Content { operations };
-    let content_bytes = content.encode()
+    let content_bytes = content
+        .encode()
         .map_err(|e| format!("Failed to encode content: {e}"))?;
 
     let page_id = page_ids[page_index];
@@ -374,16 +390,21 @@ pub fn add_text(
 }
 
 pub fn protect_pdf(data: &[u8], password: &str) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let mut crypt_dict = Dictionary::new();
     crypt_dict.set("Filter", Object::Name("Standard".into()));
     crypt_dict.set("V", Object::Integer(2));
     crypt_dict.set("R", Object::Integer(3));
     crypt_dict.set("Length", Object::Integer(128));
-    crypt_dict.set("O", Object::String(password.as_bytes().to_vec(), lopdf::StringFormat::Literal));
-    crypt_dict.set("U", Object::String(password.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+    crypt_dict.set(
+        "O",
+        Object::String(password.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+    );
+    crypt_dict.set(
+        "U",
+        Object::String(password.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+    );
     crypt_dict.set("P", Object::Integer(-4));
 
     let crypt_id = doc.add_object(Object::Dictionary(crypt_dict));
@@ -405,12 +426,15 @@ pub fn create_blank_pdf(width: f64, height: f64, page_count: usize) -> Result<Ve
         let mut page_dict = Dictionary::new();
         page_dict.set("Type", Object::Name("Page".into()));
         page_dict.set("Parent", Object::Reference(pages_id));
-        page_dict.set("MediaBox", Object::Array(vec![
-            Object::Real(0.0),
-            Object::Real(0.0),
-            Object::Real(width as f32),
-            Object::Real(height as f32),
-        ]));
+        page_dict.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(width as f32),
+                Object::Real(height as f32),
+            ]),
+        );
         let page_id = doc.add_object(Object::Dictionary(page_dict));
         kids.push(Object::Reference(page_id));
     }
@@ -438,15 +462,14 @@ pub fn add_image_to_page(
     width: f64,
     height: f64,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
     }
 
-    let img = image::load_from_memory(image_data)
-        .map_err(|e| format!("Failed to decode image: {e}"))?;
+    let img =
+        image::load_from_memory(image_data).map_err(|e| format!("Failed to decode image: {e}"))?;
     let rgb = img.to_rgb8();
     let img_width = rgb.width();
     let img_height = rgb.height();
@@ -471,23 +494,30 @@ pub fn add_image_to_page(
     let page_id = page_ids[page_index];
     let operations = vec![
         lopdf::content::Operation::new("q", vec![]),
-        lopdf::content::Operation::new("cm", vec![
-            Object::Real(width as f32),
-            Object::Real(0.0),
-            Object::Real(0.0),
-            Object::Real(height as f32),
-            Object::Real(x as f32),
-            Object::Real(y as f32),
-        ]),
+        lopdf::content::Operation::new(
+            "cm",
+            vec![
+                Object::Real(width as f32),
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(height as f32),
+                Object::Real(x as f32),
+                Object::Real(y as f32),
+            ],
+        ),
         lopdf::content::Operation::new("Do", vec![Object::Name("Img".into())]),
         lopdf::content::Operation::new("Q", vec![]),
     ];
 
     let content = lopdf::content::Content { operations };
-    let content_bytes = content.encode().map_err(|e| format!("Failed to encode: {e}"))?;
+    let content_bytes = content
+        .encode()
+        .map_err(|e| format!("Failed to encode: {e}"))?;
 
     let mut content_stream = Stream::new(Dictionary::new(), content_bytes);
-    content_stream.dict.set("Type", Object::Name("Content".into()));
+    content_stream
+        .dict
+        .set("Type", Object::Name("Content".into()));
     let content_id = doc.add_object(content_stream);
 
     if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
@@ -517,21 +547,22 @@ pub fn crop_page(
     width: f64,
     height: f64,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
     }
     let page_id = page_ids[page_index];
     if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
-        dict.set("MediaBox", Object::Array(vec![
-            Object::Real(x as f32),
-            Object::Real(y as f32),
-            Object::Real((x + width) as f32),
-            Object::Real((y + height) as f32),
-        ]));
+        dict.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Real(x as f32),
+                Object::Real(y as f32),
+                Object::Real((x + width) as f32),
+                Object::Real((y + height) as f32),
+            ]),
+        );
     }
     save_doc(&mut doc)
 }
-

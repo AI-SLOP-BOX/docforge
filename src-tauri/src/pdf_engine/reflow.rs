@@ -1,24 +1,80 @@
-use lopdf::{Document, Object, Stream, Dictionary};
 use super::common::*;
+use lopdf::{Dictionary, Document, Object, Stream};
 
 // ===== JIS X 4051 準拠 日本語禁則判定 & プロポーショナルグリフ幅 =====
 
 pub(crate) fn is_kinsoku_line_start(c: char) -> bool {
     matches!(
         c,
-        '、' | '。' | '，' | '．' | '・' | '：' | '；' | '？' | '！' |
-        '）' | '］' | '｝' | '〉' | '》' | '」' | '』' | '】' | '〕' | '〟' |
-        'ヽ' | 'ヾ' | 'ゝ' | 'ゞ' | '々' | 'ー' | 'ァ' | 'ィ' | 'ゥ' | 'ェ' | 'ォ' |
-        'ッ' | 'ャ' | 'ュ' | 'ョ' | 'ヮ' | 'ヵ' | 'ヶ' | 'ぁ' | 'ぃ' | 'ぅ' | 'ぇ' |
-        'ぉ' | 'っ' | 'ゃ' | 'ゅ' | 'ょ' | 'ゎ' | '℃' | '％' | '‰'
+        '、' | '。'
+            | '，'
+            | '．'
+            | '・'
+            | '：'
+            | '；'
+            | '？'
+            | '！'
+            | '）'
+            | '］'
+            | '｝'
+            | '〉'
+            | '》'
+            | '」'
+            | '』'
+            | '】'
+            | '〕'
+            | '〟'
+            | 'ヽ'
+            | 'ヾ'
+            | 'ゝ'
+            | 'ゞ'
+            | '々'
+            | 'ー'
+            | 'ァ'
+            | 'ィ'
+            | 'ゥ'
+            | 'ェ'
+            | 'ォ'
+            | 'ッ'
+            | 'ャ'
+            | 'ュ'
+            | 'ョ'
+            | 'ヮ'
+            | 'ヵ'
+            | 'ヶ'
+            | 'ぁ'
+            | 'ぃ'
+            | 'ぅ'
+            | 'ぇ'
+            | 'ぉ'
+            | 'っ'
+            | 'ゃ'
+            | 'ゅ'
+            | 'ょ'
+            | 'ゎ'
+            | '℃'
+            | '％'
+            | '‰'
     )
 }
 
 pub(crate) fn is_kinsoku_line_end(c: char) -> bool {
     matches!(
         c,
-        '（' | '［' | '｛' | '〈' | '《' | '「' | '『' | '【' | '〔' | '‘' | '“' |
-        '￥' | '＄' | '￡' | '＃'
+        '（' | '［'
+            | '｛'
+            | '〈'
+            | '《'
+            | '「'
+            | '『'
+            | '【'
+            | '〔'
+            | '‘'
+            | '“'
+            | '￥'
+            | '＄'
+            | '￡'
+            | '＃'
     )
 }
 
@@ -54,8 +110,7 @@ pub fn reflow_text(
     line_height: f32,
     color: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -126,7 +181,9 @@ pub fn reflow_text(
                 current_line_width = char_w;
             } else {
                 // 行末禁則処理：現在の行末に置いてはいけない文字（「、『 など）が最後の文字になる場合
-                if is_kinsoku_line_end(c) && (current_line_width + char_w + font_size > target_max_width) {
+                if is_kinsoku_line_end(c)
+                    && (current_line_width + char_w + font_size > target_max_width)
+                {
                     if !current_line.is_empty() {
                         wrapped_lines.push(current_line);
                         current_line = String::new();
@@ -148,20 +205,36 @@ pub fn reflow_text(
     let mut operations = vec![
         lopdf::content::Operation::new("q", vec![]),
         lopdf::content::Operation::new("BT", vec![]),
-        lopdf::content::Operation::new("Tf", vec![Object::Name("Helvetica".into()), Object::Real(font_size)]),
-        lopdf::content::Operation::new("rg", vec![Object::Real(r), Object::Real(g), Object::Real(b)]),
+        lopdf::content::Operation::new(
+            "Tf",
+            vec![Object::Name("Helvetica".into()), Object::Real(font_size)],
+        ),
+        lopdf::content::Operation::new(
+            "rg",
+            vec![Object::Real(r), Object::Real(g), Object::Real(b)],
+        ),
     ];
 
     for (i, line) in wrapped_lines.iter().enumerate() {
         let line_y = (start_y as f32) - (i as f32 * line_height);
-        operations.push(lopdf::content::Operation::new("Tm", vec![
-            Object::Real(1.0), Object::Real(0.0),
-            Object::Real(0.0), Object::Real(1.0),
-            Object::Real(start_x as f32), Object::Real(line_y),
-        ]));
-        operations.push(lopdf::content::Operation::new("Tj", vec![
-            Object::String(line.as_bytes().to_vec(), lopdf::StringFormat::Literal),
-        ]));
+        operations.push(lopdf::content::Operation::new(
+            "Tm",
+            vec![
+                Object::Real(1.0),
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(1.0),
+                Object::Real(start_x as f32),
+                Object::Real(line_y),
+            ],
+        ));
+        operations.push(lopdf::content::Operation::new(
+            "Tj",
+            vec![Object::String(
+                line.as_bytes().to_vec(),
+                lopdf::StringFormat::Literal,
+            )],
+        ));
     }
 
     operations.push(lopdf::content::Operation::new("ET", vec![]));
@@ -184,7 +257,10 @@ pub fn reflow_text(
                 dict.set("Contents", Object::Array(new_contents));
             }
             Ok(Object::Reference(ref existing_id)) => {
-                let new_contents = vec![Object::Reference(*existing_id), Object::Reference(content_id)];
+                let new_contents = vec![
+                    Object::Reference(*existing_id),
+                    Object::Reference(content_id),
+                ];
                 dict.set("Contents", Object::Array(new_contents));
             }
             _ => {

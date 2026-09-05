@@ -1,5 +1,5 @@
-use lopdf::{Document, Object, Stream, Dictionary};
 use super::common::*;
+use lopdf::{Dictionary, Document, Object, Stream};
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct PdfxValidationReport {
@@ -12,19 +12,28 @@ pub struct PdfxValidationReport {
 }
 
 /// Strict ISO 15930 Validator for PDF/X-1a:2001 and PDF/X-4:2010
-pub fn validate_pdfx_compliance(data: &[u8], target_standard: &str) -> Result<PdfxValidationReport, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to parse PDF: {e}"))?;
+pub fn validate_pdfx_compliance(
+    data: &[u8],
+    target_standard: &str,
+) -> Result<PdfxValidationReport, String> {
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to parse PDF: {e}"))?;
 
-    let is_x1a = target_standard.to_lowercase().contains("x-1a") || target_standard.to_lowercase().contains("x1a");
-    let standard_name = if is_x1a { "PDF/X-1a:2001 (ISO 15930-1)" } else { "PDF/X-4:2010 (ISO 15930-7)" };
+    let is_x1a = target_standard.to_lowercase().contains("x-1a")
+        || target_standard.to_lowercase().contains("x1a");
+    let standard_name = if is_x1a {
+        "PDF/X-1a:2001 (ISO 15930-1)"
+    } else {
+        "PDF/X-4:2010 (ISO 15930-7)"
+    };
 
     let mut passed = Vec::new();
     let mut violations = Vec::new();
     let mut output_condition = String::from("None");
 
     // 1. OutputIntents check
-    let root_id = doc.trailer.get(b"Root")
+    let root_id = doc
+        .trailer
+        .get(b"Root")
         .and_then(|o| o.as_reference())
         .ok()
         .ok_or_else(|| "PDF Root Catalog not found".to_string())?;
@@ -44,8 +53,12 @@ pub fn validate_pdfx_compliance(data: &[u8], target_standard: &str) -> Result<Pd
                             has_valid_output_intent = true;
                             if let Ok(ident) = dict.get(b"OutputConditionIdentifier") {
                                 output_condition = match ident {
-                                    Object::String(bytes, _) => String::from_utf8_lossy(bytes).to_string(),
-                                    Object::Name(bytes) => String::from_utf8_lossy(bytes).to_string(),
+                                    Object::String(bytes, _) => {
+                                        String::from_utf8_lossy(bytes).to_string()
+                                    }
+                                    Object::Name(bytes) => {
+                                        String::from_utf8_lossy(bytes).to_string()
+                                    }
                                     _ => "Standard Output Condition".to_string(),
                                 };
                             }
@@ -57,7 +70,9 @@ pub fn validate_pdfx_compliance(data: &[u8], target_standard: &str) -> Result<Pd
     }
 
     if has_valid_output_intent {
-        passed.push(format!("OutputIntent 'GTS_PDFX' present with condition: {output_condition}"));
+        passed.push(format!(
+            "OutputIntent 'GTS_PDFX' present with condition: {output_condition}"
+        ));
     } else {
         violations.push("OutputIntents entry with S=GTS_PDFX is missing".to_string());
     }
@@ -88,7 +103,10 @@ pub fn validate_pdfx_compliance(data: &[u8], target_standard: &str) -> Result<Pd
             let has_trim_or_bleed = pdict.get(b"TrimBox").is_ok() || pdict.get(b"BleedBox").is_ok();
             if !has_media || !has_trim_or_bleed {
                 page_boxes_valid = false;
-                violations.push(format!("Page {} is missing required TrimBox or BleedBox", idx + 1));
+                violations.push(format!(
+                    "Page {} is missing required TrimBox or BleedBox",
+                    idx + 1
+                ));
                 break;
             }
         }
@@ -114,26 +132,36 @@ pub fn validate_pdfx_compliance(data: &[u8], target_standard: &str) -> Result<Pd
                 if let Some(r) = res_dict {
                     if let Ok(egs) = r.get(b"ExtGState") {
                         let egs_dict = match egs {
-                            Object::Reference(id) => doc.objects.get(id).and_then(|o| o.as_dict().ok()),
+                            Object::Reference(id) => {
+                                doc.objects.get(id).and_then(|o| o.as_dict().ok())
+                            }
                             Object::Dictionary(d) => Some(d),
                             _ => None,
                         };
                         if let Some(states) = egs_dict {
                             for (_, state_obj) in states.iter() {
                                 let state_dict = match state_obj {
-                                    Object::Reference(id) => doc.objects.get(id).and_then(|o| o.as_dict().ok()),
+                                    Object::Reference(id) => {
+                                        doc.objects.get(id).and_then(|o| o.as_dict().ok())
+                                    }
                                     Object::Dictionary(d) => Some(d),
                                     _ => None,
                                 };
                                 if let Some(sd) = state_dict {
                                     if let Ok(ca) = sd.get(b"ca").and_then(|o| o.as_float()) {
-                                        if ca < 0.999 { transparency_detected = true; }
+                                        if ca < 0.999 {
+                                            transparency_detected = true;
+                                        }
                                     }
                                     if let Ok(ca) = sd.get(b"CA").and_then(|o| o.as_float()) {
-                                        if ca < 0.999 { transparency_detected = true; }
+                                        if ca < 0.999 {
+                                            transparency_detected = true;
+                                        }
                                     }
                                     if let Ok(Object::Name(bm)) = sd.get(b"BM") {
-                                        if bm != b"Normal" && bm != b"Compatible" { transparency_detected = true; }
+                                        if bm != b"Normal" && bm != b"Compatible" {
+                                            transparency_detected = true;
+                                        }
                                     }
                                 }
                             }
@@ -146,7 +174,9 @@ pub fn validate_pdfx_compliance(data: &[u8], target_standard: &str) -> Result<Pd
             if let Ok(contents) = pdict.get(b"Contents") {
                 let content_ids: Vec<OID> = match contents {
                     Object::Reference(id) => vec![*id],
-                    Object::Array(arr) => arr.iter().filter_map(|o| o.as_reference().ok()).collect(),
+                    Object::Array(arr) => {
+                        arr.iter().filter_map(|o| o.as_reference().ok()).collect()
+                    }
                     _ => vec![],
                 };
                 for cid in content_ids {
@@ -154,7 +184,11 @@ pub fn validate_pdfx_compliance(data: &[u8], target_standard: &str) -> Result<Pd
                         if let Ok(c) = lopdf::content::Content::decode(&stream.content) {
                             for op in &c.operations {
                                 if is_x1a && (op.operator == "rg" || op.operator == "RG") {
-                                    prohibited_rgb.push(format!("Page {}: DeviceRGB operator '{}'", page_idx + 1, op.operator));
+                                    prohibited_rgb.push(format!(
+                                        "Page {}: DeviceRGB operator '{}'",
+                                        page_idx + 1,
+                                        op.operator
+                                    ));
                                 }
                             }
                         }
@@ -169,7 +203,8 @@ pub fn validate_pdfx_compliance(data: &[u8], target_standard: &str) -> Result<Pd
         if let Object::Dictionary(dict) = obj {
             if let Ok(Object::Name(font_type)) = dict.get(b"Type") {
                 if font_type == b"Font" {
-                    let base_font = dict.get(b"BaseFont")
+                    let base_font = dict
+                        .get(b"BaseFont")
                         .ok()
                         .and_then(|o| match o {
                             Object::Name(bytes) => Some(String::from_utf8_lossy(bytes).to_string()),
@@ -178,17 +213,27 @@ pub fn validate_pdfx_compliance(data: &[u8], target_standard: &str) -> Result<Pd
                         .unwrap_or_else(|| "UnknownFont".into());
 
                     // Check font descriptor for FontFile / FontFile2 / FontFile3
-                    let has_font_file = if let Ok(desc_ref) = dict.get(b"FontDescriptor").and_then(|o| o.as_reference()) {
+                    let has_font_file = if let Ok(desc_ref) =
+                        dict.get(b"FontDescriptor").and_then(|o| o.as_reference())
+                    {
                         if let Some(Object::Dictionary(desc)) = doc.objects.get(&desc_ref) {
-                            desc.get(b"FontFile").is_ok() || desc.get(b"FontFile2").is_ok() || desc.get(b"FontFile3").is_ok()
+                            desc.get(b"FontFile").is_ok()
+                                || desc.get(b"FontFile2").is_ok()
+                                || desc.get(b"FontFile3").is_ok()
                         } else {
                             false
                         }
                     } else {
-                        dict.get(b"FontFile").is_ok() || dict.get(b"FontFile2").is_ok() || dict.get(b"FontFile3").is_ok()
+                        dict.get(b"FontFile").is_ok()
+                            || dict.get(b"FontFile2").is_ok()
+                            || dict.get(b"FontFile3").is_ok()
                     };
 
-                    if !has_font_file && base_font != "Helvetica" && base_font != "Times-Roman" && base_font != "Courier" {
+                    if !has_font_file
+                        && base_font != "Helvetica"
+                        && base_font != "Times-Roman"
+                        && base_font != "Courier"
+                    {
                         font_unembedded.push(base_font);
                     }
                 }
@@ -199,12 +244,17 @@ pub fn validate_pdfx_compliance(data: &[u8], target_standard: &str) -> Result<Pd
     if font_unembedded.is_empty() {
         passed.push("All fonts are properly embedded".to_string());
     } else {
-        violations.push(format!("Non-embedded fonts detected: {}", font_unembedded.join(", ")));
+        violations.push(format!(
+            "Non-embedded fonts detected: {}",
+            font_unembedded.join(", ")
+        ));
     }
 
     if is_x1a {
         if transparency_detected {
-            violations.push("PDF/X-1a strictly prohibits live transparency (Flattening required)".to_string());
+            violations.push(
+                "PDF/X-1a strictly prohibits live transparency (Flattening required)".to_string(),
+            );
         } else {
             passed.push("No live transparency detected (PDF/X-1a compliant)".to_string());
         }
@@ -212,7 +262,9 @@ pub fn validate_pdfx_compliance(data: &[u8], target_standard: &str) -> Result<Pd
         if prohibited_rgb.is_empty() {
             passed.push("Color space is restricted to CMYK and Grayscale (No RGB)".to_string());
         } else {
-            violations.push("PDF/X-1a prohibits RGB colors: all colors must be CMYK or Grayscale".to_string());
+            violations.push(
+                "PDF/X-1a prohibits RGB colors: all colors must be CMYK or Grayscale".to_string(),
+            );
         }
     } else {
         // PDF/X-4 allows transparency and color-managed RGB with OutputIntent
@@ -242,7 +294,8 @@ pub fn convert_to_pdfx_standard(
     standard: &str,
     output_intent: &str,
 ) -> Result<Vec<u8>, String> {
-    let is_x1a = standard.to_lowercase().contains("x-1a") || standard.to_lowercase().contains("x1a");
+    let is_x1a =
+        standard.to_lowercase().contains("x-1a") || standard.to_lowercase().contains("x1a");
 
     // If PDF/X-1a, flatten transparency first
     let prepared_data = if is_x1a {
@@ -251,23 +304,59 @@ pub fn convert_to_pdfx_standard(
         data.to_vec()
     };
 
-    let mut doc = Document::load_mem(&prepared_data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc =
+        Document::load_mem(&prepared_data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
-    let standard_id = if is_x1a { "PDF/X-1a:2001" } else { "PDF/X-4:2010" };
-    let condition_name = if output_intent.is_empty() { "Japan Color 2001 Coated" } else { output_intent };
+    let standard_id = if is_x1a {
+        "PDF/X-1a:2001"
+    } else {
+        "PDF/X-4:2010"
+    };
+    let condition_name = if output_intent.is_empty() {
+        "Japan Color 2001 Coated"
+    } else {
+        output_intent
+    };
 
     // 1. Set conforming PDF Version
-    doc.version = if is_x1a { "1.3".to_string() } else { "1.6".to_string() };
+    doc.version = if is_x1a {
+        "1.3".to_string()
+    } else {
+        "1.6".to_string()
+    };
 
     // 2. Build OutputIntent dictionary
     let mut intent_dict = Dictionary::new();
     intent_dict.set("Type", Object::Name("OutputIntent".into()));
     intent_dict.set("S", Object::Name("GTS_PDFX".into()));
-    intent_dict.set("OutputConditionIdentifier", Object::String(condition_name.as_bytes().to_vec(), lopdf::StringFormat::Literal));
-    intent_dict.set("OutputCondition", Object::String(condition_name.as_bytes().to_vec(), lopdf::StringFormat::Literal));
-    intent_dict.set("RegistryName", Object::String("http://www.color.org".as_bytes().to_vec(), lopdf::StringFormat::Literal));
-    intent_dict.set("Info", Object::String(condition_name.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+    intent_dict.set(
+        "OutputConditionIdentifier",
+        Object::String(
+            condition_name.as_bytes().to_vec(),
+            lopdf::StringFormat::Literal,
+        ),
+    );
+    intent_dict.set(
+        "OutputCondition",
+        Object::String(
+            condition_name.as_bytes().to_vec(),
+            lopdf::StringFormat::Literal,
+        ),
+    );
+    intent_dict.set(
+        "RegistryName",
+        Object::String(
+            "http://www.color.org".as_bytes().to_vec(),
+            lopdf::StringFormat::Literal,
+        ),
+    );
+    intent_dict.set(
+        "Info",
+        Object::String(
+            condition_name.as_bytes().to_vec(),
+            lopdf::StringFormat::Literal,
+        ),
+    );
 
     let intent_id = doc.add_object(Object::Dictionary(intent_dict));
 
@@ -280,7 +369,10 @@ pub fn convert_to_pdfx_standard(
     };
 
     if let Some(Object::Dictionary(ref mut root_dict)) = doc.objects.get_mut(&root_id) {
-        root_dict.set("OutputIntents", Object::Array(vec![Object::Reference(intent_id)]));
+        root_dict.set(
+            "OutputIntents",
+            Object::Array(vec![Object::Reference(intent_id)]),
+        );
     }
     doc.trailer.set("Root", Object::Reference(root_id));
 
@@ -294,9 +386,27 @@ pub fn convert_to_pdfx_standard(
 
     if let Some(Object::Dictionary(ref mut info_dict)) = doc.objects.get_mut(&info_id) {
         info_dict.set("Trapped", Object::Name("False".into()));
-        info_dict.set("GTS_PDFXVersion", Object::String(standard_id.as_bytes().to_vec(), lopdf::StringFormat::Literal));
-        info_dict.set("Title", Object::String(b"PDF/X Compliant Document".to_vec(), lopdf::StringFormat::Literal));
-        info_dict.set("Creator", Object::String(b"DocForge Professional PDF Engine".to_vec(), lopdf::StringFormat::Literal));
+        info_dict.set(
+            "GTS_PDFXVersion",
+            Object::String(
+                standard_id.as_bytes().to_vec(),
+                lopdf::StringFormat::Literal,
+            ),
+        );
+        info_dict.set(
+            "Title",
+            Object::String(
+                b"PDF/X Compliant Document".to_vec(),
+                lopdf::StringFormat::Literal,
+            ),
+        );
+        info_dict.set(
+            "Creator",
+            Object::String(
+                b"DocForge Professional PDF Engine".to_vec(),
+                lopdf::StringFormat::Literal,
+            ),
+        );
     }
     doc.trailer.set("Info", Object::Reference(info_id));
 
@@ -305,36 +415,44 @@ pub fn convert_to_pdfx_standard(
     for &pid in &page_ids {
         if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&pid) {
             let (pw, ph) = (
-                page_dict.get(b"MediaBox")
+                page_dict
+                    .get(b"MediaBox")
                     .ok()
                     .and_then(|mb| mb.as_array().ok())
                     .and_then(|arr| arr.get(2))
                     .and_then(|w| w.as_float().ok())
                     .unwrap_or(595.0),
-                page_dict.get(b"MediaBox")
+                page_dict
+                    .get(b"MediaBox")
                     .ok()
                     .and_then(|mb| mb.as_array().ok())
                     .and_then(|arr| arr.get(3))
                     .and_then(|h| h.as_float().ok())
-                    .unwrap_or(842.0)
+                    .unwrap_or(842.0),
             );
 
             // If TrimBox is missing, default to MediaBox
             if page_dict.get(b"TrimBox").is_err() {
-                page_dict.set("TrimBox", Object::Array(vec![
-                    Object::Real(0.0),
-                    Object::Real(0.0),
-                    Object::Real(pw),
-                    Object::Real(ph),
-                ]));
+                page_dict.set(
+                    "TrimBox",
+                    Object::Array(vec![
+                        Object::Real(0.0),
+                        Object::Real(0.0),
+                        Object::Real(pw),
+                        Object::Real(ph),
+                    ]),
+                );
             }
             if page_dict.get(b"BleedBox").is_err() {
-                page_dict.set("BleedBox", Object::Array(vec![
-                    Object::Real(0.0),
-                    Object::Real(0.0),
-                    Object::Real(pw),
-                    Object::Real(ph),
-                ]));
+                page_dict.set(
+                    "BleedBox",
+                    Object::Array(vec![
+                        Object::Real(0.0),
+                        Object::Real(0.0),
+                        Object::Real(pw),
+                        Object::Real(ph),
+                    ]),
+                );
             }
         }
     }

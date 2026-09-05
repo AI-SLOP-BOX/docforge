@@ -1,5 +1,5 @@
-use lopdf::{Document, Object, Dictionary};
 use super::common::*;
+use lopdf::{Dictionary, Document, Object};
 
 /// Repair corrupted, truncated, or broken-XRef PDF documents.
 /// Uses a fallback heuristic salvage approach:
@@ -24,19 +24,15 @@ pub fn repair_corrupt_pdf(data: &[u8]) -> Result<Vec<u8>, String> {
     let mut cursor = 0;
 
     while cursor < len {
-        // Look for next "obj"
-        if let Some(pos) = find_subsequence(&data[cursor..], b" obj") {
-            let obj_start = cursor + pos;
-            
-            // Scan backwards from `obj_start` to parse object number and generation
-            let prefix = &data[cursor..obj_start];
+        if let Some(pos) = find_subsequence(&data[cursor..], b"obj") {
+            let obj_keyword_pos = cursor + pos;
+            let prefix = &data[..obj_keyword_pos];
+
             if let Some((obj_num, gen_num)) = parse_obj_header(prefix) {
-                // Find matching "endobj"
-                let content_start = obj_start + 4;
+                let content_start = obj_keyword_pos + 3;
                 if let Some(end_pos) = find_subsequence(&data[content_start..], b"endobj") {
                     let obj_body = &data[content_start..content_start + end_pos];
                     if let Ok(parsed_obj) = parse_salvaged_object(obj_body) {
-                        // Classify object
                         if let Object::Dictionary(ref dict) = parsed_obj {
                             if let Ok(Object::Name(ref type_name)) = dict.get(b"Type") {
                                 if type_name == b"Page" {
@@ -54,7 +50,7 @@ pub fn repair_corrupt_pdf(data: &[u8]) -> Result<Vec<u8>, String> {
                     continue;
                 }
             }
-            cursor = obj_start + 4;
+            cursor = obj_keyword_pos + 3;
         } else {
             break;
         }
@@ -91,7 +87,9 @@ pub fn repair_corrupt_pdf(data: &[u8]) -> Result<Vec<u8>, String> {
     catalog_dict.set("Type", Object::Name("Catalog".into()));
     catalog_dict.set("Pages", Object::Reference(pages_id));
     let catalog_id = salvaged_doc.add_object(Object::Dictionary(catalog_dict));
-    salvaged_doc.trailer.set("Root", Object::Reference(catalog_id));
+    salvaged_doc
+        .trailer
+        .set("Root", Object::Reference(catalog_id));
 
     // 5. Clean, prune and produce valid PDF byte stream
     salvaged_doc.prune_objects();
@@ -99,11 +97,16 @@ pub fn repair_corrupt_pdf(data: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn parse_obj_header(slice: &[u8]) -> Option<(u32, u16)> {
-    let s = String::from_utf8_lossy(slice);
+    // Only inspect the tail (last ~32 bytes) of the prefix before " obj"
+    let tail_len = slice.len().min(32);
+    let tail = &slice[slice.len() - tail_len..];
+    let s = String::from_utf8_lossy(tail);
     let words: Vec<&str> = s.split_whitespace().collect();
     if words.len() >= 2 {
         let obj_num = words[words.len() - 2].parse::<u32>().ok()?;
@@ -114,21 +117,23 @@ fn parse_obj_header(slice: &[u8]) -> Option<(u32, u16)> {
 }
 
 fn parse_salvaged_object(body: &[u8]) -> Result<Object, ()> {
-    // Attempt lopdf parser on isolated object body snippet
-    let snippet = [b"1 0 obj\n", body, b"\nendobj\n"].concat();
-    if let Ok(temp_doc) = Document::load_mem(&snippet) {
+    let trimmed = body.trim_ascii();
+    let mut skeleton = Vec::new();
+    skeleton.extend_from_slice(b"%PDF-1.4\n1 0 obj\n");
+    let obj_offset = 9; // offset of "1 0 obj\n"
+    skeleton.extend_from_slice(trimmed);
+    skeleton.extend_from_slice(b"\nendobj\n");
+    let xref_pos = skeleton.len();
+    skeleton.extend_from_slice(
+        format!(
+            "xref\n0 2\n0000000000 65535 f \n{:010} 00000 n \ntrailer\n<< /Size 2 /Root 1 0 R >>\nstartxref\n{}\n%%EOF",
+            obj_offset, xref_pos
+        ).as_bytes()
+    );
+
+    if let Ok(temp_doc) = Document::load_mem(&skeleton) {
         if let Some((_, obj)) = temp_doc.objects.into_iter().next() {
             return Ok(obj);
-        }
-    }
-    // Fallback: If dictionary syntax, wrap minimally
-    let trimmed = body.trim_ascii();
-    if trimmed.starts_with(b"<<") && trimmed.ends_with(b">>") {
-        let snippet = [b"1 0 obj\n", trimmed, b"\nendobj\n"].concat();
-        if let Ok(temp_doc) = Document::load_mem(&snippet) {
-            if let Some((_, obj)) = temp_doc.objects.into_iter().next() {
-                return Ok(obj);
-            }
         }
     }
     Err(())

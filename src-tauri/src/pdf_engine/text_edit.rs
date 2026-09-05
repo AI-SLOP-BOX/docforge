@@ -1,5 +1,5 @@
-use lopdf::{Document, Object, Stream, Dictionary};
 use super::common::*;
+use lopdf::{Dictionary, Document, Object, Stream};
 
 // ===== TEXT EDITING & REFLOW =====
 
@@ -12,8 +12,7 @@ pub fn edit_text(
     _font_size: f32,
     color: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -54,7 +53,10 @@ pub fn edit_text(
                         let new_text = text.replace(search_text, replacement);
                         new_operations.push(lopdf::content::Operation::new(
                             "Tj",
-                            vec![Object::String(new_text.as_bytes().to_vec(), lopdf::StringFormat::Literal)],
+                            vec![Object::String(
+                                new_text.as_bytes().to_vec(),
+                                lopdf::StringFormat::Literal,
+                            )],
                         ));
                         continue;
                     }
@@ -77,9 +79,15 @@ pub fn edit_text(
                                 if !combined.is_empty() {
                                     if combined.contains(search_text) {
                                         let new_text = combined.replace(search_text, replacement);
-                                        new_arr.push(Object::String(new_text.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+                                        new_arr.push(Object::String(
+                                            new_text.as_bytes().to_vec(),
+                                            lopdf::StringFormat::Literal,
+                                        ));
                                     } else {
-                                        new_arr.push(Object::String(combined.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+                                        new_arr.push(Object::String(
+                                            combined.as_bytes().to_vec(),
+                                            lopdf::StringFormat::Literal,
+                                        ));
                                     }
                                     combined.clear();
                                 }
@@ -92,13 +100,22 @@ pub fn edit_text(
                     if !combined.is_empty() {
                         if combined.contains(search_text) {
                             let new_text = combined.replace(search_text, replacement);
-                            new_arr.push(Object::String(new_text.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+                            new_arr.push(Object::String(
+                                new_text.as_bytes().to_vec(),
+                                lopdf::StringFormat::Literal,
+                            ));
                         } else {
-                            new_arr.push(Object::String(combined.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+                            new_arr.push(Object::String(
+                                combined.as_bytes().to_vec(),
+                                lopdf::StringFormat::Literal,
+                            ));
                         }
                     }
 
-                    new_operations.push(lopdf::content::Operation::new("TJ", vec![Object::Array(new_arr)]));
+                    new_operations.push(lopdf::content::Operation::new(
+                        "TJ",
+                        vec![Object::Array(new_arr)],
+                    ));
                     continue;
                 }
                 new_operations.push(op.clone());
@@ -114,7 +131,9 @@ pub fn edit_text(
     }
 
     // Create new content stream
-    let content = lopdf::content::Content { operations: new_operations };
+    let content = lopdf::content::Content {
+        operations: new_operations,
+    };
     let content_bytes = content.encode().map_err(|e| format!("Encode error: {e}"))?;
 
     let mut stream = Stream::new(Dictionary::new(), content_bytes);
@@ -132,8 +151,7 @@ pub fn get_text_positions(
     data: &[u8],
     page_index: usize,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -181,7 +199,9 @@ pub fn get_text_positions(
                             }
                             "Tj" | "TJ" => {
                                 let text = match &op.operands[0] {
-                                    Object::String(bytes, _) => String::from_utf8_lossy(bytes).to_string(),
+                                    Object::String(bytes, _) => {
+                                        String::from_utf8_lossy(bytes).to_string()
+                                    }
                                     Object::Array(arr) => {
                                         let mut s = String::new();
                                         for item in arr {
@@ -216,24 +236,17 @@ pub fn get_text_positions(
     Ok(positions)
 }
 
-
 // ===== FONT EMBEDDING & SUBSETTING =====
 
-pub fn embed_font(
-    data: &[u8],
-    page_index: usize,
-    font_path: &str,
-) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+pub fn embed_font(data: &[u8], page_index: usize, font_path: &str) -> Result<Vec<u8>, String> {
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
     }
 
     // Read font file
-    let font_data = std::fs::read(font_path)
-        .map_err(|e| format!("Failed to read font: {e}"))?;
+    let font_data = std::fs::read(font_path).map_err(|e| format!("Failed to read font: {e}"))?;
 
     // Create font descriptor
     let mut font_dict = Dictionary::new();
@@ -272,11 +285,8 @@ pub fn embed_font(
 // ===== REFLOW (Paragraph Re-layout) =====
 pub use super::reflow::*;
 
-
-
 // ===== ADVANCED TEXT EDITING (Separated to text_block_ops.rs) =====
 pub use super::text_block_ops::*;
 
 // ===== FONT & STYLING MANAGEMENT (Separated to font_style.rs) =====
 pub use super::font_style::*;
-

@@ -1,5 +1,5 @@
-use lopdf::{Document, Object, Stream, Dictionary};
 use super::common::*;
+use lopdf::{Dictionary, Document, Object, Stream};
 
 // ===== BATCH PROCESSING & PAGE FORMATTING (Separated to batch_ops.rs) =====
 pub use super::batch_ops::*;
@@ -7,8 +7,7 @@ pub use super::batch_ops::*;
 // ===== OPTIMIZE =====
 
 pub fn optimize_pdf(data: &[u8]) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     // Remove duplicate objects by comparing their string representations
     let mut seen: std::collections::HashMap<String, OID> = std::collections::HashMap::new();
@@ -44,10 +43,8 @@ pub struct CompareResult {
 }
 
 pub fn compare_pdfs(data1: &[u8], data2: &[u8]) -> Result<CompareResult, String> {
-    let doc1 = Document::load_mem(data1)
-        .map_err(|e| format!("Failed to load PDF1: {e}"))?;
-    let doc2 = Document::load_mem(data2)
-        .map_err(|e| format!("Failed to load PDF2: {e}"))?;
+    let doc1 = Document::load_mem(data1).map_err(|e| format!("Failed to load PDF1: {e}"))?;
+    let doc2 = Document::load_mem(data2).map_err(|e| format!("Failed to load PDF2: {e}"))?;
 
     let pages1 = get_page_ids(&doc1);
     let pages2 = get_page_ids(&doc2);
@@ -58,7 +55,9 @@ pub fn compare_pdfs(data1: &[u8], data2: &[u8]) -> Result<CompareResult, String>
 
     let min_pages = pages1.len().min(pages2.len());
     for i in 0..min_pages {
-        if let (Some(obj1), Some(obj2)) = (doc1.objects.get(&pages1[i]), doc2.objects.get(&pages2[i])) {
+        if let (Some(obj1), Some(obj2)) =
+            (doc1.objects.get(&pages1[i]), doc2.objects.get(&pages2[i]))
+        {
             let repr1 = format!("{:?}", obj1);
             let repr2 = format!("{:?}", obj2);
             if repr1 == repr2 {
@@ -84,14 +83,12 @@ pub fn compare_pdfs(data1: &[u8], data2: &[u8]) -> Result<CompareResult, String>
 // ===== PDF RENDERING =====
 
 pub fn get_page_count_from_data(data: &[u8]) -> Result<usize, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     Ok(get_page_ids(&doc).len())
 }
 
 pub fn get_page_dimensions_from_data(data: &[u8], page_index: usize) -> Result<(f32, f32), String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -114,9 +111,12 @@ pub fn render_page_to_png(data: &[u8], page_index: usize, dpi: u32) -> Result<Ve
     let output = std::process::Command::new("pdftoppm")
         .args([
             "-png",
-            "-r", &dpi.to_string(),
-            "-f", &(page_index + 1).to_string(),
-            "-l", &(page_index + 1).to_string(),
+            "-r",
+            &dpi.to_string(),
+            "-f",
+            &(page_index + 1).to_string(),
+            "-l",
+            &(page_index + 1).to_string(),
             temp_pdf.to_str().unwrap_or(""),
             temp_prefix.to_str().unwrap_or(""),
         ])
@@ -126,7 +126,11 @@ pub fn render_page_to_png(data: &[u8], page_index: usize, dpi: u32) -> Result<Ve
 
     let output = match output {
         Ok(out) => out,
-        Err(e) => return Err(format!("Failed to execute pdftoppm: {e}. Ensure poppler is installed.")),
+        Err(e) => {
+            return Err(format!(
+                "Failed to execute pdftoppm: {e}. Ensure poppler is installed."
+            ))
+        }
     };
 
     if !output.status.success() {
@@ -137,11 +141,16 @@ pub fn render_page_to_png(data: &[u8], page_index: usize, dpi: u32) -> Result<Ve
     // Match output file (pdftoppm creates format: prefix-1.png, prefix-01.png, or prefix-000001.png)
     let mut found_file = None;
     if let Ok(entries) = std::fs::read_dir(&temp_dir) {
-        let prefix_stem = temp_prefix.file_name().unwrap_or_default().to_string_lossy();
+        let prefix_stem = temp_prefix
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(stem) = path.file_stem() {
-                if stem.to_string_lossy().starts_with(&*prefix_stem) && path.extension().and_then(|s| s.to_str()) == Some("png") {
+                if stem.to_string_lossy().starts_with(&*prefix_stem)
+                    && path.extension().and_then(|s| s.to_str()) == Some("png")
+                {
                     found_file = Some(path);
                     break;
                 }
@@ -149,16 +158,17 @@ pub fn render_page_to_png(data: &[u8], page_index: usize, dpi: u32) -> Result<Ve
         }
     }
 
-    let png_path = found_file.ok_or_else(|| "Failed to locate rendered PNG output from pdftoppm".to_string())?;
-    let png_data = std::fs::read(&png_path).map_err(|e| format!("Failed to read rendered PNG: {e}"))?;
+    let png_path = found_file
+        .ok_or_else(|| "Failed to locate rendered PNG output from pdftoppm".to_string())?;
+    let png_data =
+        std::fs::read(&png_path).map_err(|e| format!("Failed to read rendered PNG: {e}"))?;
     let _ = std::fs::remove_file(&png_path);
 
     Ok(png_data)
 }
 
 pub fn get_page_text(data: &[u8], page_index: usize) -> Result<String, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -194,8 +204,7 @@ pub fn get_page_text(data: &[u8], page_index: usize) -> Result<String, String> {
 }
 
 pub fn search_text(data: &[u8], query: &str) -> Result<Vec<serde_json::Value>, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     let mut results = Vec::new();
 
@@ -235,8 +244,7 @@ pub fn search_text(data: &[u8], query: &str) -> Result<Vec<serde_json::Value>, S
 }
 
 pub fn get_bookmarks(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let mut bookmarks = Vec::new();
 
@@ -253,10 +261,13 @@ pub fn get_bookmarks(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
                         for item_ref in first_refs {
                             if let Object::Reference(item_id) = item_ref {
                                 if let Some(Object::Dictionary(item)) = doc.objects.get(&item_id) {
-                                    let title = item.get(b"Title")
+                                    let title = item
+                                        .get(b"Title")
                                         .ok()
                                         .and_then(|o| match o {
-                                            Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).to_string()),
+                                            Object::String(bytes, _) => {
+                                                Some(String::from_utf8_lossy(bytes).to_string())
+                                            }
                                             _ => None,
                                         })
                                         .unwrap_or_else(|| "Untitled".to_string());
@@ -277,8 +288,7 @@ pub fn get_bookmarks(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
 }
 
 pub fn get_form_fields(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let mut fields = Vec::new();
 
@@ -294,25 +304,35 @@ pub fn get_form_fields(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
                     if let Ok(Object::Array(field_refs)) = acroform.get(b"Fields") {
                         for field_ref in field_refs {
                             if let Object::Reference(field_id) = field_ref {
-                                if let Some(Object::Dictionary(field)) = doc.objects.get(&field_id) {
-                                    let name = field.get(b"T")
+                                if let Some(Object::Dictionary(field)) = doc.objects.get(&field_id)
+                                {
+                                    let name = field
+                                        .get(b"T")
                                         .ok()
                                         .and_then(|o| match o {
-                                            Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).to_string()),
+                                            Object::String(bytes, _) => {
+                                                Some(String::from_utf8_lossy(bytes).to_string())
+                                            }
                                             _ => None,
                                         })
                                         .unwrap_or_default();
-                                    let field_type = field.get(b"FT")
+                                    let field_type = field
+                                        .get(b"FT")
                                         .ok()
                                         .and_then(|o| match o {
-                                            Object::Name(bytes) => Some(String::from_utf8_lossy(bytes).to_string()),
+                                            Object::Name(bytes) => {
+                                                Some(String::from_utf8_lossy(bytes).to_string())
+                                            }
                                             _ => None,
                                         })
                                         .unwrap_or_default();
-                                    let value = field.get(b"V")
+                                    let value = field
+                                        .get(b"V")
                                         .ok()
                                         .and_then(|o| match o {
-                                            Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).to_string()),
+                                            Object::String(bytes, _) => {
+                                                Some(String::from_utf8_lossy(bytes).to_string())
+                                            }
                                             _ => None,
                                         })
                                         .unwrap_or_default();
@@ -335,8 +355,7 @@ pub fn get_form_fields(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
 }
 
 pub fn set_form_field(data: &[u8], field_name: &str, value: &str) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let root_id = match doc.trailer.get(b"Root").and_then(|o| o.as_reference()) {
         Ok(id) => id,
@@ -353,7 +372,8 @@ pub fn set_form_field(data: &[u8], field_name: &str, value: &str) -> Result<Vec<
                     if let Ok(Object::Array(field_refs)) = acroform.get(b"Fields") {
                         for field_ref in field_refs {
                             if let Object::Reference(field_id) = field_ref {
-                                if let Some(Object::Dictionary(field)) = doc.objects.get(&field_id) {
+                                if let Some(Object::Dictionary(field)) = doc.objects.get(&field_id)
+                                {
                                     if let Ok(Object::String(bytes, _)) = field.get(b"T") {
                                         let name = String::from_utf8_lossy(bytes);
                                         if name == field_name {
@@ -373,7 +393,10 @@ pub fn set_form_field(data: &[u8], field_name: &str, value: &str) -> Result<Vec<
     // Now update the field
     if let Some(field_id) = target_field_id {
         if let Some(Object::Dictionary(ref mut f)) = doc.objects.get_mut(&field_id) {
-            f.set("V", Object::String(value.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+            f.set(
+                "V",
+                Object::String(value.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+            );
         }
     }
 
@@ -382,8 +405,7 @@ pub fn set_form_field(data: &[u8], field_name: &str, value: &str) -> Result<Vec<
 
 pub fn flatten_form(data: &[u8]) -> Result<Vec<u8>, String> {
     // Simplified: just remove AcroForm
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let root_id = match doc.trailer.get(b"Root").and_then(|o| o.as_reference()) {
         Ok(id) => id,
@@ -409,8 +431,7 @@ pub fn add_stamp(
     color: &str,
     font_size: f32,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -423,10 +444,25 @@ pub fn add_stamp(
     let operations = vec![
         lopdf::content::Operation::new("q", vec![]),
         lopdf::content::Operation::new("BT", vec![]),
-        lopdf::content::Operation::new("Tf", vec![Object::Name("Helvetica-Bold".into()), Object::Real(font_size)]),
-        lopdf::content::Operation::new("rg", vec![Object::Real(r), Object::Real(g), Object::Real(b)]),
+        lopdf::content::Operation::new(
+            "Tf",
+            vec![
+                Object::Name("Helvetica-Bold".into()),
+                Object::Real(font_size),
+            ],
+        ),
+        lopdf::content::Operation::new(
+            "rg",
+            vec![Object::Real(r), Object::Real(g), Object::Real(b)],
+        ),
         lopdf::content::Operation::new("Td", vec![Object::Real(x as f32), Object::Real(y as f32)]),
-        lopdf::content::Operation::new("Tj", vec![Object::String(text.as_bytes().to_vec(), lopdf::StringFormat::Literal)]),
+        lopdf::content::Operation::new(
+            "Tj",
+            vec![Object::String(
+                text.as_bytes().to_vec(),
+                lopdf::StringFormat::Literal,
+            )],
+        ),
         lopdf::content::Operation::new("ET", vec![]),
         lopdf::content::Operation::new("Q", vec![]),
     ];
@@ -452,7 +488,9 @@ pub fn print_pdf(data: &[u8]) -> Result<(), String> {
 
     std::fs::write(&temp_pdf, data).map_err(|e| format!("Failed to write temp: {e}"))?;
 
-    let pdf_str = temp_pdf.to_str().ok_or_else(|| "Invalid temp path".to_string())?;
+    let pdf_str = temp_pdf
+        .to_str()
+        .ok_or_else(|| "Invalid temp path".to_string())?;
 
     #[cfg(target_os = "macos")]
     {
@@ -482,8 +520,7 @@ pub fn print_pdf(data: &[u8]) -> Result<(), String> {
 }
 
 pub fn get_pdf_metadata(data: &[u8]) -> Result<serde_json::Value, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let page_count = get_page_ids(&doc).len();
 
@@ -509,4 +546,3 @@ pub fn get_pdf_metadata(data: &[u8]) -> Result<serde_json::Value, String> {
         "version": doc.version,
     }))
 }
-

@@ -1,5 +1,5 @@
-use lopdf::{Document, Object, Stream, Dictionary};
 use super::common::*;
+use lopdf::{Dictionary, Document, Object, Stream};
 
 // ===== REDACTION =====
 
@@ -12,8 +12,7 @@ pub fn redact_area(
     height: f64,
     color: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -23,11 +22,19 @@ pub fn redact_area(
 
     let operations = vec![
         lopdf::content::Operation::new("q", vec![]),
-        lopdf::content::Operation::new("rg", vec![Object::Real(r), Object::Real(g), Object::Real(b)]),
-        lopdf::content::Operation::new("re", vec![
-            Object::Real(x as f32), Object::Real(y as f32),
-            Object::Real(width as f32), Object::Real(height as f32),
-        ]),
+        lopdf::content::Operation::new(
+            "rg",
+            vec![Object::Real(r), Object::Real(g), Object::Real(b)],
+        ),
+        lopdf::content::Operation::new(
+            "re",
+            vec![
+                Object::Real(x as f32),
+                Object::Real(y as f32),
+                Object::Real(width as f32),
+                Object::Real(height as f32),
+            ],
+        ),
         lopdf::content::Operation::new("f", vec![]),
         lopdf::content::Operation::new("Q", vec![]),
     ];
@@ -47,13 +54,8 @@ pub fn redact_area(
     save_doc(&mut doc)
 }
 
-pub fn redact_text(
-    data: &[u8],
-    search_text: &str,
-    _replacement: &str,
-) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+pub fn redact_text(data: &[u8], search_text: &str, _replacement: &str) -> Result<Vec<u8>, String> {
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc).clone();
 
     // Collect references first to avoid borrow issues
@@ -83,8 +85,13 @@ pub fn redact_text(
     // Now modify the collected references
     for ref_id in refs_to_modify {
         if let Some(Object::Dictionary(ref mut annot_dict)) = doc.objects.get_mut(&ref_id) {
-            annot_dict.set("Contents",
-                Object::String(replacement_text.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+            annot_dict.set(
+                "Contents",
+                Object::String(
+                    replacement_text.as_bytes().to_vec(),
+                    lopdf::StringFormat::Literal,
+                ),
+            );
         }
     }
 
@@ -102,8 +109,7 @@ pub fn deep_redact(
     height: f64,
     color: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -115,13 +121,15 @@ pub fn deep_redact(
 
     // Step 1: Get existing content stream and remove text in redacted area
     let content_id = if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
-        dict.get(b"Contents").ok().and_then(|o| o.as_reference().ok())
+        dict.get(b"Contents")
+            .ok()
+            .and_then(|o| o.as_reference().ok())
     } else {
         None
     };
 
     let mut new_operations = Vec::new();
-    
+
     if let Some(content_id) = content_id {
         if let Some(Object::Stream(stream)) = doc.objects.get(&content_id) {
             if let Ok(content) = lopdf::content::Content::decode(&stream.content) {
@@ -142,10 +150,21 @@ pub fn deep_redact(
                         "Tm" => {
                             // Text matrix
                             if op.operands.len() >= 6 {
-                                if let (Object::Real(_a), Object::Real(_b), Object::Real(_c), 
-                                        Object::Real(_d), Object::Real(e), Object::Real(f)) = 
-                                    (&op.operands[0], &op.operands[1], &op.operands[2],
-                                     &op.operands[3], &op.operands[4], &op.operands[5]) {
+                                if let (
+                                    Object::Real(_a),
+                                    Object::Real(_b),
+                                    Object::Real(_c),
+                                    Object::Real(_d),
+                                    Object::Real(e),
+                                    Object::Real(f),
+                                ) = (
+                                    &op.operands[0],
+                                    &op.operands[1],
+                                    &op.operands[2],
+                                    &op.operands[3],
+                                    &op.operands[4],
+                                    &op.operands[5],
+                                ) {
                                     current_x = *e;
                                     current_y = *f;
                                 }
@@ -153,8 +172,9 @@ pub fn deep_redact(
                             new_operations.push(op.clone());
                         }
                         "Td" | "TD" => {
-                            if let (Some(Object::Real(dx)), Some(Object::Real(dy))) = 
-                                (op.operands.first(), op.operands.get(1)) {
+                            if let (Some(Object::Real(dx)), Some(Object::Real(dy))) =
+                                (op.operands.first(), op.operands.get(1))
+                            {
                                 current_x += dx;
                                 current_y += dy;
                             }
@@ -163,11 +183,11 @@ pub fn deep_redact(
                         "Tj" | "TJ" => {
                             if in_text {
                                 // Check if text is in redacted area
-                                let text_in_area = current_x >= x as f32 && 
-                                                  current_x <= (x + width) as f32 &&
-                                                  current_y >= y as f32 && 
-                                                  current_y <= (y + height) as f32;
-                                
+                                let text_in_area = current_x >= x as f32
+                                    && current_x <= (x + width) as f32
+                                    && current_y >= y as f32
+                                    && current_y <= (y + height) as f32;
+
                                 if text_in_area {
                                     // Skip this text operation (remove it completely)
                                     continue;
@@ -184,15 +204,25 @@ pub fn deep_redact(
 
     // Step 2: Draw opaque redaction box
     new_operations.push(lopdf::content::Operation::new("q", vec![]));
-    new_operations.push(lopdf::content::Operation::new("rg", vec![Object::Real(r), Object::Real(g), Object::Real(b)]));
-    new_operations.push(lopdf::content::Operation::new("re", vec![
-        Object::Real(x as f32), Object::Real(y as f32),
-        Object::Real(width as f32), Object::Real(height as f32),
-    ]));
+    new_operations.push(lopdf::content::Operation::new(
+        "rg",
+        vec![Object::Real(r), Object::Real(g), Object::Real(b)],
+    ));
+    new_operations.push(lopdf::content::Operation::new(
+        "re",
+        vec![
+            Object::Real(x as f32),
+            Object::Real(y as f32),
+            Object::Real(width as f32),
+            Object::Real(height as f32),
+        ],
+    ));
     new_operations.push(lopdf::content::Operation::new("f", vec![]));
     new_operations.push(lopdf::content::Operation::new("Q", vec![]));
 
-    let content = lopdf::content::Content { operations: new_operations };
+    let content = lopdf::content::Content {
+        operations: new_operations,
+    };
     let content_bytes = content.encode().map_err(|e| format!("Encode error: {e}"))?;
 
     let mut stream = Stream::new(Dictionary::new(), content_bytes);
@@ -279,14 +309,9 @@ pub fn deep_redact(
 
 // ===== REDACTION WITH TEXT SEARCH =====
 
-pub fn redact_text_deep(
-    data: &[u8],
-    search_text: &str,
-    color: &str,
-) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
-    
+pub fn redact_text_deep(data: &[u8], search_text: &str, color: &str) -> Result<Vec<u8>, String> {
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
+
     let (_r, _g, _b) = parse_hex_color(color, (0.0, 0.0, 0.0));
 
     let page_ids = get_page_ids(&doc).clone();
@@ -294,7 +319,9 @@ pub fn redact_text_deep(
     for &page_id in &page_ids {
         // Get content stream
         let content_id = if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
-            dict.get(b"Contents").ok().and_then(|o| o.as_reference().ok())
+            dict.get(b"Contents")
+                .ok()
+                .and_then(|o| o.as_reference().ok())
         } else {
             None
         };
@@ -339,8 +366,9 @@ pub fn redact_text_deep(
                     new_operations.push(op.clone());
                 }
                 "Td" | "TD" => {
-                    if let (Some(Object::Real(dx)), Some(Object::Real(dy))) = 
-                        (op.operands.first(), op.operands.get(1)) {
+                    if let (Some(Object::Real(dx)), Some(Object::Real(dy))) =
+                        (op.operands.first(), op.operands.get(1))
+                    {
                         current_x += dx;
                         current_y += dy;
                     }
@@ -379,7 +407,9 @@ pub fn redact_text_deep(
         }
 
         // Create new content stream
-        let content = lopdf::content::Content { operations: new_operations };
+        let content = lopdf::content::Content {
+            operations: new_operations,
+        };
         let content_bytes = content.encode().map_err(|e| format!("Encode error: {e}"))?;
 
         let mut stream = Stream::new(Dictionary::new(), content_bytes);

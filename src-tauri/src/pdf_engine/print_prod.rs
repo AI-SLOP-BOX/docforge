@@ -1,5 +1,5 @@
-use lopdf::{Document, Object, Stream, Dictionary};
 use super::common::*;
+use lopdf::{Dictionary, Document, Object, Stream};
 
 // ===== COLOR MANAGEMENT (CMYK) =====
 
@@ -35,8 +35,7 @@ pub fn cmyk_to_rgb(c: u8, m: u8, y: u8, k: u8) -> (u8, u8, u8) {
 }
 
 pub fn convert_to_cmyk(data: &[u8]) -> Result<Vec<u8>, String> {
-    let img = image::load_from_memory(data)
-        .map_err(|e| format!("Failed to load image: {e}"))?;
+    let img = image::load_from_memory(data).map_err(|e| format!("Failed to load image: {e}"))?;
     let rgb = img.to_rgb8();
     let (width, height) = rgb.dimensions();
 
@@ -56,25 +55,32 @@ pub fn convert_to_cmyk(data: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 pub fn embed_icc_profile(data: &[u8], profile_name: &str) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     // Create ICC profile stream (sRGB profile as default)
     let srgb_profile = vec![
-        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00,
     ];
 
     let mut profile_dict = Dictionary::new();
-    profile_dict.set("N", Object::String(profile_name.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+    profile_dict.set(
+        "N",
+        Object::String(
+            profile_name.as_bytes().to_vec(),
+            lopdf::StringFormat::Literal,
+        ),
+    );
     profile_dict.set("Length", Object::Integer(srgb_profile.len() as i64));
     let profile_stream = Stream::new(profile_dict, srgb_profile);
     let profile_id = doc.add_object(profile_stream);
 
     // Add to catalog
-    let root_id = doc.trailer.get(b"Root")
+    let root_id = doc
+        .trailer
+        .get(b"Root")
         .and_then(|o| o.as_reference())
         .ok()
         .ok_or("No root")?;
@@ -113,13 +119,8 @@ pub fn embed_icc_profile(data: &[u8], profile_name: &str) -> Result<Vec<u8>, Str
 
 // ===== ADVANCED PDF OPTIMIZATION =====
 
-pub fn downsample_images(
-    data: &[u8],
-    target_dpi: u32,
-    quality: u8,
-) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+pub fn downsample_images(data: &[u8], target_dpi: u32, quality: u8) -> Result<Vec<u8>, String> {
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let mut images_to_update: Vec<OID> = Vec::new();
 
@@ -140,7 +141,9 @@ pub fn downsample_images(
     for img_id in images_to_update {
         if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&img_id) {
             // Get image dimensions
-            let width = stream.dict.get(b"Width")
+            let width = stream
+                .dict
+                .get(b"Width")
                 .ok()
                 .and_then(|o| match o {
                     Object::Integer(v) => Some(*v as u32),
@@ -148,7 +151,9 @@ pub fn downsample_images(
                 })
                 .unwrap_or(100);
 
-            let height = stream.dict.get(b"Height")
+            let height = stream
+                .dict
+                .get(b"Height")
                 .ok()
                 .and_then(|o| match o {
                     Object::Integer(v) => Some(*v as u32),
@@ -165,16 +170,23 @@ pub fn downsample_images(
             if new_width < width && new_height < height {
                 // Try to decode and re-encode with lower quality
                 if let Ok(decoded) = image::load_from_memory(&stream.content) {
-                    let resized = decoded.resize(new_width, new_height, image::imageops::FilterType::Lanczos3);
+                    let resized = decoded.resize(
+                        new_width,
+                        new_height,
+                        image::imageops::FilterType::Lanczos3,
+                    );
 
                     // Encode as JPEG with specified quality
                     let mut jpg_buf = std::io::Cursor::new(Vec::new());
-                    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpg_buf, quality);
+                    let encoder =
+                        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpg_buf, quality);
                     if resized.write_with_encoder(encoder).is_ok() {
                         let new_data = jpg_buf.into_inner();
                         stream.content = new_data;
                         stream.dict.set("Width", Object::Integer(new_width as i64));
-                        stream.dict.set("Height", Object::Integer(new_height as i64));
+                        stream
+                            .dict
+                            .set("Height", Object::Integer(new_height as i64));
                         stream.dict.set("Filter", Object::Name("DCTDecode".into()));
                         stream.dict.remove(b"BitsPerComponent");
                     }
@@ -187,13 +199,10 @@ pub fn downsample_images(
 }
 
 pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     // Remove document info
-    let info_id = doc.trailer.get(b"Info")
-        .and_then(|o| o.as_reference())
-        .ok();
+    let info_id = doc.trailer.get(b"Info").and_then(|o| o.as_reference()).ok();
 
     if let Some(id) = info_id {
         doc.objects.remove(&id);
@@ -201,9 +210,7 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
     }
 
     // Remove XMP metadata
-    let root_id = doc.trailer.get(b"Root")
-        .and_then(|o| o.as_reference())
-        .ok();
+    let root_id = doc.trailer.get(b"Root").and_then(|o| o.as_reference()).ok();
 
     if let Some(id) = root_id {
         if let Some(root) = doc.objects.get_mut(&id) {
@@ -225,8 +232,7 @@ pub fn remove_metadata(data: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 pub fn flatten_content(data: &[u8]) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let page_ids = get_page_ids(&doc).clone();
 
@@ -245,7 +251,9 @@ pub fn flatten_content(data: &[u8]) -> Result<Vec<u8>, String> {
         }
 
         if !all_operations.is_empty() {
-            let content = lopdf::content::Content { operations: all_operations };
+            let content = lopdf::content::Content {
+                operations: all_operations,
+            };
             let content_bytes = content.encode().map_err(|e| format!("Encode error: {e}"))?;
 
             let mut stream = Stream::new(Dictionary::new(), content_bytes);
@@ -261,19 +269,19 @@ pub fn flatten_content(data: &[u8]) -> Result<Vec<u8>, String> {
     save_doc(&mut doc)
 }
 
-
 // ===== TRANSPARENCY FLATTENING =====
 
 pub fn flatten_transparency(data: &[u8]) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let page_ids = get_page_ids(&doc).clone();
 
     for &page_id in &page_ids {
         // Get content stream
         let content_id = if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
-            dict.get(b"Contents").ok().and_then(|o| o.as_reference().ok())
+            dict.get(b"Contents")
+                .ok()
+                .and_then(|o| o.as_reference().ok())
         } else {
             None
         };
@@ -322,7 +330,9 @@ pub fn flatten_transparency(data: &[u8]) -> Result<Vec<u8>, String> {
         }
 
         // Create new content stream
-        let content = lopdf::content::Content { operations: new_operations };
+        let content = lopdf::content::Content {
+            operations: new_operations,
+        };
         let content_bytes = content.encode().map_err(|e| format!("Encode error: {e}"))?;
 
         let mut stream = Stream::new(Dictionary::new(), content_bytes);
@@ -340,13 +350,10 @@ pub fn flatten_transparency(data: &[u8]) -> Result<Vec<u8>, String> {
 // ===== PDF/X (ISO 15930 Print Production Standard) =====
 pub use super::pdf_x::*;
 
-
-
 // ===== COLOR SEPARATION PREVIEW & TOTAL AREA COVERAGE (TAC) =====
 
 pub fn preview_color_separations(data: &[u8]) -> Result<serde_json::Value, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let page_ids = get_page_ids(&doc);
     let mut separations = Vec::new();
@@ -389,10 +396,10 @@ pub fn preview_color_separations(data: &[u8]) -> Result<serde_json::Value, Strin
         "separations": separations,
         "needs_cmyk_conversion": needs_cmyk_conversion,
         "max_tac_limit": 300,
-        "recommendation": if needs_cmyk_conversion { 
-            "CMYK conversion recommended for print production" 
-        } else { 
-            "Color separations look correct" 
+        "recommendation": if needs_cmyk_conversion {
+            "CMYK conversion recommended for print production"
+        } else {
+            "Color separations look correct"
         },
     }))
 }
@@ -471,7 +478,6 @@ pub fn render_color_separation(
         .map_err(|e| format!("Failed to encode separation PNG: {e}"))?;
     Ok(out_buf.into_inner())
 }
-
 
 // ===== PREFLIGHT & PRINT PRODUCTION CHECK (Separated to preflight.rs) =====
 pub use super::preflight::*;

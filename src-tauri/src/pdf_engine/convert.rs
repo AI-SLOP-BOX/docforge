@@ -1,10 +1,15 @@
-use lopdf::{Document, Object, Stream, Dictionary};
-use super::*;
 use super::common::*;
+use super::*;
+use lopdf::{Dictionary, Document, Object, Stream};
 
 // ===== PDF→IMAGE CONVERSION =====
 
-pub fn pdf_to_images(data: &[u8], output_dir: &str, format: &str, dpi: u32) -> Result<Vec<String>, String> {
+pub fn pdf_to_images(
+    data: &[u8],
+    output_dir: &str,
+    format: &str,
+    dpi: u32,
+) -> Result<Vec<String>, String> {
     let tmp = std::env::temp_dir().join("docforge_pdf2img");
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let input = tmp.join("input.pdf");
@@ -75,10 +80,15 @@ pub fn images_to_pdf(image_paths: &[String], output_path: &str) -> Result<(), St
 
         let mut page_dict = Dictionary::new();
         page_dict.set("Type", Object::Name("Page".into()));
-        page_dict.set("MediaBox", Object::Array(vec![
-            Object::Real(0.0), Object::Real(0.0),
-            Object::Real(w as f32), Object::Real(h as f32),
-        ]));
+        page_dict.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(w as f32),
+                Object::Real(h as f32),
+            ]),
+        );
         page_dict.set("Contents", Object::Reference(img_id));
 
         let page_id = doc.add_object(Object::Dictionary(page_dict));
@@ -136,10 +146,15 @@ pub fn repair_pdf(data: &[u8]) -> Result<Vec<u8>, String> {
     for &page_id in &page_ids {
         if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
             if dict.get(b"MediaBox").is_err() {
-                dict.set("MediaBox", Object::Array(vec![
-                    Object::Real(0.0), Object::Real(0.0),
-                    Object::Real(595.0), Object::Real(842.0),
-                ]));
+                dict.set(
+                    "MediaBox",
+                    Object::Array(vec![
+                        Object::Real(0.0),
+                        Object::Real(0.0),
+                        Object::Real(595.0),
+                        Object::Real(842.0),
+                    ]),
+                );
             }
         }
     }
@@ -183,10 +198,8 @@ pub fn compress_pdf_quality(data: &[u8], quality: u8) -> Result<Vec<u8>, String>
         if let Object::Stream(ref mut stream) = obj {
             if stream.dict.get(b"Filter").is_err() {
                 let level = (quality as u32 * 9 / 100).min(9);
-                let _compressed = flate2::write::GzEncoder::new(
-                    Vec::new(),
-                    flate2::Compression::new(level),
-                );
+                let _compressed =
+                    flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(level));
                 // Note: stream compression would go here
             }
         }
@@ -199,7 +212,7 @@ pub fn compress_pdf_quality(data: &[u8], quality: u8) -> Result<Vec<u8>, String>
 
 pub fn add_page_numbers(
     data: &[u8],
-    position: &str,  // "bottom-center", "top-right", etc.
+    position: &str, // "bottom-center", "top-right", etc.
     font_size: f32,
     start_number: usize,
 ) -> Result<Vec<u8>, String> {
@@ -287,29 +300,67 @@ pub fn create_action_wizard(name: &str, steps: &[ActionStep]) -> Result<String, 
     serde_json::to_string_pretty(&wizard).map_err(|e| e.to_string())
 }
 
-pub fn execute_action_wizard(
-    data: &[u8],
-    wizard_json: &str,
-) -> Result<Vec<u8>, String> {
-    let wizard: ActionWizard = serde_json::from_str(wizard_json)
-        .map_err(|e| format!("Invalid wizard JSON: {e}"))?;
+pub fn execute_action_wizard(data: &[u8], wizard_json: &str) -> Result<Vec<u8>, String> {
+    let wizard: ActionWizard =
+        serde_json::from_str(wizard_json).map_err(|e| format!("Invalid wizard JSON: {e}"))?;
 
     let mut current_data = data.to_vec();
 
     for step in &wizard.steps {
         match step.action_type.as_str() {
             "add_watermark" => {
-                let text = step.params.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                let font_size = step.params.get("font_size").and_then(|v| v.as_f64()).unwrap_or(48.0) as f32;
-                let color = step.params.get("color").and_then(|v| v.as_str()).unwrap_or("#FF0000");
-                let opacity = step.params.get("opacity").and_then(|v| v.as_f64()).unwrap_or(0.3) as f32;
-                let rotation = step.params.get("rotation").and_then(|v| v.as_f64()).unwrap_or(45.0) as f32;
-                current_data = add_watermark(&current_data, text, opacity, rotation, font_size, color, true, &[])?;
+                let text = step
+                    .params
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let font_size = step
+                    .params
+                    .get("font_size")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(48.0) as f32;
+                let color = step
+                    .params
+                    .get("color")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("#FF0000");
+                let opacity = step
+                    .params
+                    .get("opacity")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.3) as f32;
+                let rotation = step
+                    .params
+                    .get("rotation")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(45.0) as f32;
+                current_data = add_watermark(
+                    &current_data,
+                    text,
+                    opacity,
+                    rotation,
+                    font_size,
+                    color,
+                    true,
+                    &[],
+                )?;
             }
             "add_page_numbers" => {
-                let position = step.params.get("position").and_then(|v| v.as_str()).unwrap_or("bottom-center");
-                let font_size = step.params.get("font_size").and_then(|v| v.as_f64()).unwrap_or(12.0) as f32;
-                let start = step.params.get("start_number").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+                let position = step
+                    .params
+                    .get("position")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("bottom-center");
+                let font_size = step
+                    .params
+                    .get("font_size")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(12.0) as f32;
+                let start = step
+                    .params
+                    .get("start_number")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1) as usize;
                 current_data = add_page_numbers(&current_data, position, font_size, start)?;
             }
             "optimize" => {
@@ -333,28 +384,31 @@ pub fn execute_action_wizard(
     Ok(current_data)
 }
 
-
 // ===== ACCESSIBILITY (Separated to accessibility.rs) =====
 pub use super::accessibility::*;
-
 
 // ===== JAVASCRIPT EMBEDDING =====
 
 pub fn embed_javascript(data: &[u8], script: &str) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     // Create JavaScript action
     let mut js_dict = Dictionary::new();
     js_dict.set("S", Object::Name("JavaScript".into()));
-    js_dict.set("JS", Object::String(script.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+    js_dict.set(
+        "JS",
+        Object::String(script.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+    );
 
     let _js_id = doc.add_object(Object::Dictionary(js_dict));
 
     // Create OpenAction to run on document open
     let mut open_action = Dictionary::new();
     open_action.set("S", Object::Name("JavaScript".into()));
-    open_action.set("JS", Object::String(script.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+    open_action.set(
+        "JS",
+        Object::String(script.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+    );
 
     let open_action_id = doc.add_object(Object::Dictionary(open_action));
 
@@ -377,12 +431,8 @@ pub fn embed_javascript(data: &[u8], script: &str) -> Result<Vec<u8>, String> {
 
 // ===== BOOKMARK TREE =====
 
-pub fn add_bookmark_tree(
-    data: &[u8],
-    bookmarks: &[serde_json::Value],
-) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+pub fn add_bookmark_tree(data: &[u8], bookmarks: &[serde_json::Value]) -> Result<Vec<u8>, String> {
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let page_ids = get_page_ids(&doc);
 
@@ -390,19 +440,28 @@ pub fn add_bookmark_tree(
     let mut outline_items = Vec::new();
 
     for bm in bookmarks {
-        let title = bm.get("title").and_then(|v| v.as_str()).unwrap_or("Untitled");
+        let title = bm
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Untitled");
         let page_idx = bm.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
         if page_idx < page_ids.len() {
             let page_id = page_ids[page_idx];
 
             let mut item_dict = Dictionary::new();
-            item_dict.set("Title", Object::String(title.as_bytes().to_vec(), lopdf::StringFormat::Literal));
-            item_dict.set("Dest", Object::Array(vec![
-                Object::Reference(page_id),
-                Object::Name("FitH".into()),
-                Object::Real(0.0),
-            ]));
+            item_dict.set(
+                "Title",
+                Object::String(title.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+            );
+            item_dict.set(
+                "Dest",
+                Object::Array(vec![
+                    Object::Reference(page_id),
+                    Object::Name("FitH".into()),
+                    Object::Real(0.0),
+                ]),
+            );
 
             let item_id = doc.add_object(Object::Dictionary(item_dict));
             outline_items.push(Object::Reference(item_id));
@@ -461,4 +520,3 @@ pub fn add_bookmark_tree(
 
 // ===== CONTENT COMPARISON & OCR (Separated to ocr_layout.rs) =====
 pub use super::ocr_layout::*;
-

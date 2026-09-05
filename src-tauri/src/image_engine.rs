@@ -1,5 +1,5 @@
-use image::{DynamicImage, RgbImage, Rgb, ImageBuffer, GenericImageView};
 use image::imageops::FilterType;
+use image::{DynamicImage, GenericImageView, ImageBuffer, Rgb, RgbImage};
 
 pub fn process_scanned_images(
     paths: &[String],
@@ -7,19 +7,18 @@ pub fn process_scanned_images(
     correct_perspective: bool,
     dpi: u32,
 ) -> Result<Vec<u8>, String> {
-    let mut images: Vec<DynamicImage> = Vec::new();
-
-    for path in paths {
-        let img = image::open(path)
-            .map_err(|e| format!("Failed to open {path}: {e}"))?;
-        images.push(img);
+    if paths.is_empty() {
+        return Err("No images provided for scan processing".to_string());
     }
 
-    let mut processed = Vec::new();
+    let mut doc = lopdf::Document::with_version("1.7");
+    let pages_id = doc.add_object(lopdf::Object::Dictionary(lopdf::Dictionary::new()));
+    let mut kids = Vec::new();
 
-    for img in images {
+    for path in paths {
+        let img = image::open(path).map_err(|e| format!("Failed to open {path}: {e}"))?;
+
         let mut result = img;
-
         if correct_perspective {
             result = correct_perspective_simple(&result);
         }
@@ -35,14 +34,78 @@ pub fn process_scanned_images(
         let mut rgb: RgbImage = result.to_rgb8();
         enhance_contrast(&mut rgb);
 
+        let (width, height) = rgb.dimensions();
         let dynamic = DynamicImage::ImageRgb8(rgb);
-        let mut buf = std::io::Cursor::new(Vec::new());
-        dynamic.write_to(&mut buf, image::ImageFormat::Png)
-            .map_err(|e| format!("Failed to encode: {e}"))?;
-        processed.extend_from_slice(&buf.into_inner());
+
+        // Encode as JPEG for efficient PDF embedding
+        let mut jpeg_buf = std::io::Cursor::new(Vec::new());
+        dynamic
+            .write_to(&mut jpeg_buf, image::ImageFormat::Jpeg)
+            .map_err(|e| format!("Failed to encode image to JPEG: {e}"))?;
+        let jpeg_bytes = jpeg_buf.into_inner();
+
+        let mut img_dict = lopdf::Dictionary::new();
+        img_dict.set("Type", lopdf::Object::Name("XObject".into()));
+        img_dict.set("Subtype", lopdf::Object::Name("Image".into()));
+        img_dict.set("Width", lopdf::Object::Integer(width as i64));
+        img_dict.set("Height", lopdf::Object::Integer(height as i64));
+        img_dict.set("ColorSpace", lopdf::Object::Name("DeviceRGB".into()));
+        img_dict.set("BitsPerComponent", lopdf::Object::Integer(8));
+        img_dict.set("Filter", lopdf::Object::Name("DCTDecode".into()));
+
+        let img_stream = lopdf::Stream::new(img_dict, jpeg_bytes);
+        let img_id = doc.add_object(lopdf::Object::Stream(img_stream));
+
+        let pt_w = (width as f64 * 72.0 / dpi as f64) as f32;
+        let pt_h = (height as f64 * 72.0 / dpi as f64) as f32;
+
+        let mut xobj_dict = lopdf::Dictionary::new();
+        xobj_dict.set("Im1", lopdf::Object::Reference(img_id));
+        let mut res_dict = lopdf::Dictionary::new();
+        res_dict.set("XObject", lopdf::Object::Dictionary(xobj_dict));
+
+        let content_stream = format!("q {pt_w:.2} 0 0 {pt_h:.2} 0 0 cm /Im1 Do Q");
+        let content_id = doc.add_object(lopdf::Object::Stream(lopdf::Stream::new(
+            lopdf::Dictionary::new(),
+            content_stream.into_bytes(),
+        )));
+
+        let mut page_dict = lopdf::Dictionary::new();
+        page_dict.set("Type", lopdf::Object::Name("Page".into()));
+        page_dict.set("Parent", lopdf::Object::Reference(pages_id));
+        page_dict.set(
+            "MediaBox",
+            lopdf::Object::Array(vec![
+                lopdf::Object::Real(0.0),
+                lopdf::Object::Real(0.0),
+                lopdf::Object::Real(pt_w),
+                lopdf::Object::Real(pt_h),
+            ]),
+        );
+        page_dict.set("Resources", lopdf::Object::Dictionary(res_dict));
+        page_dict.set("Contents", lopdf::Object::Reference(content_id));
+
+        let page_id = doc.add_object(lopdf::Object::Dictionary(page_dict));
+        kids.push(lopdf::Object::Reference(page_id));
     }
 
-    Ok(processed)
+    let mut pages_dict = lopdf::Dictionary::new();
+    pages_dict.set("Type", lopdf::Object::Name("Pages".into()));
+    pages_dict.set("Kids", lopdf::Object::Array(kids));
+    pages_dict.set("Count", lopdf::Object::Integer(paths.len() as i64));
+    doc.objects
+        .insert(pages_id, lopdf::Object::Dictionary(pages_dict));
+
+    let mut root_dict = lopdf::Dictionary::new();
+    root_dict.set("Type", lopdf::Object::Name("Catalog".into()));
+    root_dict.set("Pages", lopdf::Object::Reference(pages_id));
+    let root_id = doc.add_object(lopdf::Object::Dictionary(root_dict));
+    doc.trailer.set("Root", lopdf::Object::Reference(root_id));
+
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf)
+        .map_err(|e| format!("Failed to generate scanned PDF: {e}"))?;
+    Ok(buf)
 }
 
 fn correct_perspective_simple(img: &DynamicImage) -> DynamicImage {
@@ -62,12 +125,14 @@ fn correct_perspective_simple(img: &DynamicImage) -> DynamicImage {
 }
 
 fn to_grayscale(rgb: &RgbImage) -> Vec<u8> {
-    rgb.pixels().map(|p| {
-        let r = p[0] as u32;
-        let g = p[1] as u32;
-        let b = p[2] as u32;
-        ((r * 299 + g * 587 + b * 114) / 1000) as u8
-    }).collect()
+    rgb.pixels()
+        .map(|p| {
+            let r = p[0] as u32;
+            let g = p[1] as u32;
+            let b = p[2] as u32;
+            ((r * 299 + g * 587 + b * 114) / 1000) as u8
+        })
+        .collect()
 }
 
 fn sobel_edges(gray: &[u8], w: u32, h: u32) -> Vec<u8> {
@@ -76,19 +141,19 @@ fn sobel_edges(gray: &[u8], w: u32, h: u32) -> Vec<u8> {
     for y in 1..h - 1 {
         for x in 1..w - 1 {
             let idx = (y * w + x) as usize;
-            let gx = -(gray[((y-1)*w + x-1) as usize] as i16)
-                + gray[((y-1)*w + x+1) as usize] as i16
-                - 2 * gray[(y*w + x-1) as usize] as i16
-                + 2 * gray[(y*w + x+1) as usize] as i16
-                - gray[((y+1)*w + x-1) as usize] as i16
-                + gray[((y+1)*w + x+1) as usize] as i16;
+            let gx = -(gray[((y - 1) * w + x - 1) as usize] as i16)
+                + gray[((y - 1) * w + x + 1) as usize] as i16
+                - 2 * gray[(y * w + x - 1) as usize] as i16
+                + 2 * gray[(y * w + x + 1) as usize] as i16
+                - gray[((y + 1) * w + x - 1) as usize] as i16
+                + gray[((y + 1) * w + x + 1) as usize] as i16;
 
-            let gy = -(gray[((y-1)*w + x-1) as usize] as i16)
-                - 2 * gray[((y-1)*w + x) as usize] as i16
-                - gray[((y-1)*w + x+1) as usize] as i16
-                + gray[((y+1)*w + x-1) as usize] as i16
-                + 2 * gray[((y+1)*w + x) as usize] as i16
-                + gray[((y+1)*w + x+1) as usize] as i16;
+            let gy = -(gray[((y - 1) * w + x - 1) as usize] as i16)
+                - 2 * gray[((y - 1) * w + x) as usize] as i16
+                - gray[((y - 1) * w + x + 1) as usize] as i16
+                + gray[((y + 1) * w + x - 1) as usize] as i16
+                + 2 * gray[((y + 1) * w + x) as usize] as i16
+                + gray[((y + 1) * w + x + 1) as usize] as i16;
 
             let magnitude = ((gx * gx + gy * gy) as f64).sqrt() as u8;
             edges[idx] = if magnitude > 50 { 255 } else { 0 };
@@ -97,7 +162,11 @@ fn sobel_edges(gray: &[u8], w: u32, h: u32) -> Vec<u8> {
     edges
 }
 
-fn find_document_corners(edges: &[u8], w: u32, h: u32) -> Option<((f64, f64), (f64, f64), (f64, f64), (f64, f64))> {
+fn find_document_corners(
+    edges: &[u8],
+    w: u32,
+    h: u32,
+) -> Option<((f64, f64), (f64, f64), (f64, f64), (f64, f64))> {
     let margin_x = w / 10;
     let margin_y = h / 10;
 
@@ -109,10 +178,18 @@ fn find_document_corners(edges: &[u8], w: u32, h: u32) -> Option<((f64, f64), (f
     for y in margin_y..h - margin_y {
         for x in margin_x..w - margin_x {
             if edges[(y * w + x) as usize] > 0 {
-                if y < top_edge { top_edge = y; }
-                if y > bottom_edge { bottom_edge = y; }
-                if x < left_edge { left_edge = x; }
-                if x > right_edge { right_edge = x; }
+                if y < top_edge {
+                    top_edge = y;
+                }
+                if y > bottom_edge {
+                    bottom_edge = y;
+                }
+                if x < left_edge {
+                    left_edge = x;
+                }
+                if x > right_edge {
+                    right_edge = x;
+                }
             }
         }
     }
@@ -151,10 +228,14 @@ fn perspective_transform(
             let fx = dx as f64 / dst_w as f64;
             let fy = dy as f64 / dst_h as f64;
 
-            let sx = (tl.0 * (1.0 - fx) * (1.0 - fy) + tr.0 * fx * (1.0 - fy)
-                + br.0 * fx * fy + bl.0 * (1.0 - fx) * fy) as u32;
-            let sy = (tl.1 * (1.0 - fx) * (1.0 - fy) + tr.1 * fx * (1.0 - fy)
-                + br.1 * fx * fy + bl.1 * (1.0 - fx) * fy) as u32;
+            let sx = (tl.0 * (1.0 - fx) * (1.0 - fy)
+                + tr.0 * fx * (1.0 - fy)
+                + br.0 * fx * fy
+                + bl.0 * (1.0 - fx) * fy) as u32;
+            let sy = (tl.1 * (1.0 - fx) * (1.0 - fy)
+                + tr.1 * fx * (1.0 - fy)
+                + br.1 * fx * fy
+                + bl.1 * (1.0 - fx) * fy) as u32;
 
             if sx < sw && sy < sh {
                 let pixel = src.get_pixel(sx, sy);
@@ -233,9 +314,9 @@ fn enhance_contrast(img: &mut RgbImage) {
         cumulative[i] = cumulative[i - 1] + hist[i];
     }
 
-    let lut: Vec<u8> = (0..256).map(|i| {
-        ((cumulative[i] as f64 / total as f64) * 255.0).min(255.0) as u8
-    }).collect();
+    let lut: Vec<u8> = (0..256)
+        .map(|i| ((cumulative[i] as f64 / total as f64) * 255.0).min(255.0) as u8)
+        .collect();
 
     for p in img.pixels_mut() {
         p[0] = lut[p[0] as usize];

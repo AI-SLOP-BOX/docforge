@@ -1,11 +1,10 @@
-use lopdf::{Document, Object, Dictionary};
 use super::common::*;
+use lopdf::{Dictionary, Document, Object};
 
 // ===== ACCESSIBILITY CHECK =====
 
 pub fn check_accessibility(data: &[u8]) -> Result<serde_json::Value, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let page_ids = get_page_ids(&doc);
     let mut issues = Vec::new();
@@ -89,9 +88,11 @@ pub fn check_accessibility(data: &[u8]) -> Result<serde_json::Value, String> {
         }
     }
 
-    let score = if issues.is_empty() { 100 } else { 
-        100 - (issues.iter().filter(|i| i["severity"] == "error").count() * 20) 
-              - (issues.iter().filter(|i| i["severity"] == "warning").count() * 10)
+    let score = if issues.is_empty() {
+        100
+    } else {
+        100 - (issues.iter().filter(|i| i["severity"] == "error").count() * 20)
+            - (issues.iter().filter(|i| i["severity"] == "warning").count() * 10)
     };
 
     Ok(serde_json::json!({
@@ -110,23 +111,33 @@ pub fn fix_accessibility_issues(
     default_title: &str,
     default_lang: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let root_id = match doc.trailer.get(b"Root").and_then(|o| o.as_reference()) {
         Ok(id) => id,
         Err(_) => return Err("No Root catalog found in PDF".into()),
     };
 
-    let title_str = if default_title.trim().is_empty() { "Accessible Document" } else { default_title };
-    let lang_str = if default_lang.trim().is_empty() { "ja-JP" } else { default_lang };
+    let title_str = if default_title.trim().is_empty() {
+        "Accessible Document"
+    } else {
+        default_title
+    };
+    let lang_str = if default_lang.trim().is_empty() {
+        "ja-JP"
+    } else {
+        default_lang
+    };
 
     // 1. Mark Root with MarkInfo /Marked true and Lang
     if let Some(Object::Dictionary(ref mut root_dict)) = doc.objects.get_mut(&root_id) {
         let mut mark_info = Dictionary::new();
         mark_info.set("Marked", Object::Boolean(true));
         root_dict.set("MarkInfo", Object::Dictionary(mark_info));
-        root_dict.set("Lang", Object::String(lang_str.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+        root_dict.set(
+            "Lang",
+            Object::String(lang_str.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+        );
 
         // Set ViewerPreferences to display DocTitle
         let mut vp = Dictionary::new();
@@ -144,7 +155,10 @@ pub fn fix_accessibility_issues(
 
     if let Some(Object::Dictionary(ref mut info_dict)) = doc.objects.get_mut(&info_id) {
         if info_dict.get(b"Title").is_err() {
-            info_dict.set("Title", Object::String(title_str.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+            info_dict.set(
+                "Title",
+                Object::String(title_str.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+            );
         }
     }
     doc.trailer.set("Info", Object::Reference(info_id));
@@ -152,28 +166,39 @@ pub fn fix_accessibility_issues(
     // 3. Add Tooltips (TU) to Widget form fields if missing
     let page_ids = get_page_ids(&doc);
     for &page_id in &page_ids {
-        let annot_refs: Vec<OID> = if let Some(Object::Dictionary(ref pdict)) = doc.objects.get(&page_id) {
-            pdict.get(b"Annots")
-                .ok()
-                .and_then(|a| a.as_array().ok())
-                .map(|arr| arr.iter().filter_map(|o| o.as_reference().ok()).collect())
-                .unwrap_or_default()
-        } else {
-            vec![]
-        };
+        let annot_refs: Vec<OID> =
+            if let Some(Object::Dictionary(ref pdict)) = doc.objects.get(&page_id) {
+                pdict
+                    .get(b"Annots")
+                    .ok()
+                    .and_then(|a| a.as_array().ok())
+                    .map(|arr| arr.iter().filter_map(|o| o.as_reference().ok()).collect())
+                    .unwrap_or_default()
+            } else {
+                vec![]
+            };
 
         for aref in annot_refs {
             if let Some(Object::Dictionary(ref mut adict)) = doc.objects.get_mut(&aref) {
                 if let Ok(Object::Name(sub)) = adict.get(b"Subtype") {
                     if sub == b"Widget" && adict.get(b"TU").is_err() {
-                        let name_desc = adict.get(b"T")
+                        let name_desc = adict
+                            .get(b"T")
                             .ok()
                             .and_then(|o| match o {
-                                Object::String(b, _) => Some(String::from_utf8_lossy(b).to_string()),
+                                Object::String(b, _) => {
+                                    Some(String::from_utf8_lossy(b).to_string())
+                                }
                                 _ => None,
                             })
                             .unwrap_or_else(|| "Form Input Field".to_string());
-                        adict.set("TU", Object::String(name_desc.as_bytes().to_vec(), lopdf::StringFormat::Literal));
+                        adict.set(
+                            "TU",
+                            Object::String(
+                                name_desc.as_bytes().to_vec(),
+                                lopdf::StringFormat::Literal,
+                            ),
+                        );
                     }
                 }
             }

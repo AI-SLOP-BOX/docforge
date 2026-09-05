@@ -1,13 +1,14 @@
-use lopdf::{Document, Object, Stream, Dictionary};
-use super::*;
 use super::common::*;
+use super::*;
+use lopdf::{Dictionary, Document, Object, Stream};
 
 pub fn pdf_to_word(data: &[u8], output_path: &str) -> Result<(), String> {
     let doc = Document::load_mem(data).map_err(|e| e.to_string())?;
     let page_ids = get_page_ids(&doc);
 
     // Generate clean Word-compatible HTML format with styling and semantic headers
-    let mut html = String::from(r#"<!DOCTYPE html>
+    let mut html = String::from(
+        r#"<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -20,19 +21,20 @@ p { margin: 8px 0; }
 </style>
 </head>
 <body>
-"#);
+"#,
+    );
 
     for (i, &_page_id) in page_ids.iter().enumerate() {
         html.push_str(&format!("<h2>ページ {}</h2>\n", i + 1));
         if let Ok(page_text) = get_page_text(data, i) {
             for line in page_text.lines() {
                 let trimmed = line.trim();
-                    let escaped = trimmed
-                        .replace('&', "&amp;")
-                        .replace('<', "&lt;")
-                        .replace('>', "&gt;")
-                        .replace('"', "&quot;");
-                    html.push_str(&format!("<p>{}</p>\n", escaped));
+                let escaped = trimmed
+                    .replace('&', "&amp;")
+                    .replace('<', "&lt;")
+                    .replace('>', "&gt;")
+                    .replace('"', "&quot;");
+                html.push_str(&format!("<p>{}</p>\n", escaped));
             }
         }
         if i + 1 < page_ids.len() {
@@ -57,10 +59,13 @@ pub fn pdf_to_excel(data: &[u8], output_path: &str) -> Result<(), String> {
         if let Ok(page_text) = get_page_text(data, i) {
             for (line_idx, line) in page_text.lines().enumerate() {
                 let trimmed = line.trim();
-                if trimmed.is_empty() { continue; }
+                if trimmed.is_empty() {
+                    continue;
+                }
 
                 // Split columns by tabs, multiple spaces, or commas
-                let cols: Vec<&str> = trimmed.split(|c: char| c == '\t' || c == ',')
+                let cols: Vec<&str> = trimmed
+                    .split(|c: char| c == '\t' || c == ',')
                     .flat_map(|part| {
                         if part.contains("  ") {
                             part.split_whitespace().collect::<Vec<&str>>()
@@ -94,7 +99,8 @@ pub fn pdf_to_powerpoint(data: &[u8], output_path: &str) -> Result<(), String> {
     let doc = Document::load_mem(data).map_err(|e| e.to_string())?;
     let page_ids = get_page_ids(&doc);
 
-    let mut html = String::from(r#"<!DOCTYPE html>
+    let mut html = String::from(
+        r#"<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -106,7 +112,8 @@ body { margin: 0; padding: 0; }
 </style>
 </head>
 <body>
-"#);
+"#,
+    );
 
     let tmp = std::env::temp_dir().join("docforge_pdf2ppt");
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
@@ -114,7 +121,10 @@ body { margin: 0; padding: 0; }
     for i in 0..page_ids.len() {
         let images = pdf_to_images(data, &tmp.to_string_lossy(), "png", 150)?;
         if let Some(img_path) = images.get(i) {
-            html.push_str(&format!(r#"<div class="slide"><img src="{}"></div>"#, img_path));
+            html.push_str(&format!(
+                r#"<div class="slide"><img src="{}"></div>"#,
+                img_path
+            ));
         }
     }
 
@@ -124,16 +134,14 @@ body { margin: 0; padding: 0; }
     Ok(())
 }
 
-pub fn create_pdf_portfolio(
-    file_paths: &[String],
-    output_path: &str,
-) -> Result<(), String> {
+pub fn create_pdf_portfolio(file_paths: &[String], output_path: &str) -> Result<(), String> {
     let mut doc = Document::with_version("1.7");
     let mut files = Vec::new();
 
     for path in file_paths {
         let path_obj = std::path::Path::new(path);
-        let filename = path_obj.file_name()
+        let filename = path_obj
+            .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".into());
 
@@ -149,13 +157,22 @@ pub fn create_pdf_portfolio(
 
         let mut fs_dict = Dictionary::new();
         fs_dict.set("Type", Object::Name("Filespec".into()));
-        fs_dict.set("F", Object::String(filename.clone().into_bytes(), lopdf::StringFormat::Literal));
-        fs_dict.set("UF", Object::String(filename.into_bytes(), lopdf::StringFormat::Literal));
-        fs_dict.set("EF", Object::Dictionary({
-            let mut ef = Dictionary::new();
-            ef.set("F", Object::Reference(embed_id));
-            ef
-        }));
+        fs_dict.set(
+            "F",
+            Object::String(filename.clone().into_bytes(), lopdf::StringFormat::Literal),
+        );
+        fs_dict.set(
+            "UF",
+            Object::String(filename.into_bytes(), lopdf::StringFormat::Literal),
+        );
+        fs_dict.set(
+            "EF",
+            Object::Dictionary({
+                let mut ef = Dictionary::new();
+                ef.set("F", Object::Reference(embed_id));
+                ef
+            }),
+        );
 
         let fs_id = doc.add_object(Object::Dictionary(fs_dict));
         files.push(Object::Reference(fs_id));
@@ -165,7 +182,13 @@ pub fn create_pdf_portfolio(
     collection_dict.set("Type", Object::Name("Collection".into()));
     collection_dict.set("View", Object::Name("Detail".into()));
     collection_dict.set("Sort", Object::Name("Name".into()));
-    collection_dict.set("Title", Object::String("PDF Portfolio".as_bytes().to_vec(), lopdf::StringFormat::Literal));
+    collection_dict.set(
+        "Title",
+        Object::String(
+            "PDF Portfolio".as_bytes().to_vec(),
+            lopdf::StringFormat::Literal,
+        ),
+    );
 
     let collection_id = doc.add_object(Object::Dictionary(collection_dict));
 
@@ -175,7 +198,10 @@ pub fn create_pdf_portfolio(
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| format!("file_{i}"));
-        names_array.push(Object::String(filename.into_bytes(), lopdf::StringFormat::Literal));
+        names_array.push(Object::String(
+            filename.into_bytes(),
+            lopdf::StringFormat::Literal,
+        ));
         if let Some(Object::Reference(ref_id)) = files.get(i) {
             names_array.push(Object::Reference(*ref_id));
         }

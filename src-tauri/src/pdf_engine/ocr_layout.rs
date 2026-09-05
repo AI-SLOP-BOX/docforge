@@ -1,25 +1,20 @@
-use lopdf::{Document, Object, Stream, Dictionary};
 use super::common::*;
 use super::inspect::get_page_text;
+use lopdf::{Dictionary, Document, Object, Stream};
 
 // ===== CONTENT COMPARISON (Visual Diff) =====
 
-pub fn visual_diff(
-    data1: &[u8],
-    data2: &[u8],
-    output_path: &str,
-) -> Result<(), String> {
-    let doc1 = Document::load_mem(data1)
-        .map_err(|e| format!("Failed to load first PDF: {e}"))?;
-    let doc2 = Document::load_mem(data2)
-        .map_err(|e| format!("Failed to load second PDF: {e}"))?;
+pub fn visual_diff(data1: &[u8], data2: &[u8], output_path: &str) -> Result<(), String> {
+    let doc1 = Document::load_mem(data1).map_err(|e| format!("Failed to load first PDF: {e}"))?;
+    let doc2 = Document::load_mem(data2).map_err(|e| format!("Failed to load second PDF: {e}"))?;
 
     let pages1 = get_page_ids(&doc1);
     let pages2 = get_page_ids(&doc2);
 
     let max_pages = pages1.len().max(pages2.len());
 
-    let mut html = String::from(r#"<!DOCTYPE html>
+    let mut html = String::from(
+        r#"<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -36,17 +31,23 @@ body { font-family: sans-serif; margin: 20px; }
 </head>
 <body>
 <h1>PDF Visual Comparison</h1>
-"#);
+"#,
+    );
 
     for i in 0..max_pages {
-        html.push_str(&format!("<h2>Page {}</h2><div class='diff-container'>", i + 1));
+        html.push_str(&format!(
+            "<h2>Page {}</h2><div class='diff-container'>",
+            i + 1
+        ));
 
         if i < pages1.len() {
             html.push_str("<div class='diff-page'><h3>Original</h3>");
             html.push_str(&format!("<p>Page {} exists</p>", i + 1));
             html.push_str("</div>");
         } else {
-            html.push_str("<div class='diff-page removed'><h3>Original</h3><p>Page missing</p></div>");
+            html.push_str(
+                "<div class='diff-page removed'><h3>Original</h3><p>Page missing</p></div>",
+            );
         }
 
         if i < pages2.len() {
@@ -54,7 +55,9 @@ body { font-family: sans-serif; margin: 20px; }
             html.push_str(&format!("<p>Page {} exists</p>", i + 1));
             html.push_str("</div>");
         } else {
-            html.push_str("<div class='diff-page removed'><h3>Modified</h3><p>Page missing</p></div>");
+            html.push_str(
+                "<div class='diff-page removed'><h3>Modified</h3><p>Page missing</p></div>",
+            );
         }
 
         html.push_str("</div>");
@@ -73,8 +76,7 @@ pub fn ocr_with_layout(
     language: &str,
     preserve_layout: bool,
 ) -> Result<serde_json::Value, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let page_ids = get_page_ids(&doc);
     let mut pages = Vec::new();
@@ -135,12 +137,8 @@ fn analyze_text_layout(text: &str, _page_width: f32, page_height: f32) -> serde_
 }
 
 // Create searchable PDF from scanned PDF
-pub fn create_searchable_pdf_from_scanned(
-    data: &[u8],
-    _language: &str,
-) -> Result<Vec<u8>, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+pub fn create_searchable_pdf_from_scanned(data: &[u8], _language: &str) -> Result<Vec<u8>, String> {
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let page_ids = get_page_ids(&doc).clone();
     let mut new_doc = Document::with_version("1.7");
@@ -152,10 +150,15 @@ pub fn create_searchable_pdf_from_scanned(
         // Create new page with same dimensions
         let mut page_dict = Dictionary::new();
         page_dict.set("Type", Object::Name("Page".into()));
-        page_dict.set("MediaBox", Object::Array(vec![
-            Object::Real(0.0), Object::Real(0.0),
-            Object::Real(w), Object::Real(h),
-        ]));
+        page_dict.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(w),
+                Object::Real(h),
+            ]),
+        );
 
         // Add resources for fonts
         let mut resources = Dictionary::new();

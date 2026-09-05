@@ -4,7 +4,8 @@ use std::fs;
 use std::process::exit;
 
 fn print_usage() {
-    eprintln!(r#"
+    eprintln!(
+        r#"
 DocForge CLI - High-Performance Professional PDF Engine
 ===============================================================
 Usage: docforge-cli <command> [arguments...]
@@ -56,7 +57,8 @@ Prepress & Conversion:
   convert-cmyk <input.pdf> -o <out>                    Convert RGB graphics to CMYK
   pdfa        <input.pdf> -o <out>                     Convert to archival PDF/A-1b format
   compress    <input.pdf> [--quality 1-100] -o <out>   Compress PDF stream objects
-"#);
+"#
+    );
 }
 
 fn get_arg(args: &[String], flag: &str) -> Option<String> {
@@ -75,7 +77,8 @@ fn parse_pages(s: &str) -> Vec<usize> {
         if part.contains('-') {
             let range: Vec<&str> = part.split('-').collect();
             if range.len() == 2 {
-                if let (Ok(start), Ok(end)) = (range[0].parse::<usize>(), range[1].parse::<usize>()) {
+                if let (Ok(start), Ok(end)) = (range[0].parse::<usize>(), range[1].parse::<usize>())
+                {
                     for p in start..=end {
                         pages.push(p);
                     }
@@ -122,13 +125,19 @@ fn main() {
                 println!("Pages: {}", count);
             }
             if let Ok(meta) = get_pdf_metadata(&data) {
-                println!("Metadata: {}", serde_json::to_string_pretty(&meta).unwrap_or_default());
+                println!(
+                    "Metadata: {}",
+                    serde_json::to_string_pretty(&meta).unwrap_or_default()
+                );
             }
             if let Ok(fields) = get_form_fields(&data) {
                 println!("AcroForm Fields: {}", fields.len());
             }
             if let Ok(sigs) = verify_signature(&data, 0) {
-                println!("Signatures: {}", serde_json::to_string_pretty(&sigs).unwrap_or_default());
+                println!(
+                    "Signatures: {}",
+                    serde_json::to_string_pretty(&sigs).unwrap_or_default()
+                );
             }
         }
 
@@ -167,7 +176,9 @@ fn main() {
 
         "delete-page" => {
             let input = &subargs[0];
-            let page = get_arg(subargs, "-p").and_then(|p| p.parse::<usize>().ok()).unwrap_or(1);
+            let page = get_arg(subargs, "-p")
+                .and_then(|p| p.parse::<usize>().ok())
+                .unwrap_or(1);
             let out = get_arg(subargs, "-o").unwrap_or_else(|| "output.pdf".into());
 
             let data = fs::read(input).expect("Failed to read input");
@@ -183,8 +194,12 @@ fn main() {
 
         "rotate" => {
             let input = &subargs[0];
-            let page = get_arg(subargs, "-p").and_then(|p| p.parse::<usize>().ok()).unwrap_or(1);
-            let deg = get_arg(subargs, "-d").and_then(|d| d.parse::<i32>().ok()).unwrap_or(90);
+            let page = get_arg(subargs, "-p")
+                .and_then(|p| p.parse::<usize>().ok())
+                .unwrap_or(1);
+            let deg = get_arg(subargs, "-d")
+                .and_then(|d| d.parse::<i32>().ok())
+                .unwrap_or(90);
             let out = get_arg(subargs, "-o").unwrap_or_else(|| "output.pdf".into());
 
             let data = fs::read(input).expect("Failed to read input");
@@ -204,7 +219,10 @@ fn main() {
             let out = get_arg(subargs, "-o").unwrap_or_else(|| "extracted.pdf".into());
 
             let pages = parse_pages(&pages_str);
-            let zero_based: Vec<usize> = pages.into_iter().map(|p| if p > 0 { p - 1 } else { 0 }).collect();
+            let zero_based: Vec<usize> = pages
+                .into_iter()
+                .map(|p| if p > 0 { p - 1 } else { 0 })
+                .collect();
 
             let data = fs::read(input).expect("Failed to read input");
             match extract_pages(&data, &zero_based) {
@@ -217,9 +235,15 @@ fn main() {
         }
 
         "create-blank" => {
-            let w = get_arg(subargs, "-w").and_then(|w| w.parse::<f64>().ok()).unwrap_or(595.0);
-            let h = get_arg(subargs, "-h").and_then(|h| h.parse::<f64>().ok()).unwrap_or(842.0);
-            let c = get_arg(subargs, "-c").and_then(|c| c.parse::<usize>().ok()).unwrap_or(1);
+            let w = get_arg(subargs, "-w")
+                .and_then(|w| w.parse::<f64>().ok())
+                .unwrap_or(595.0);
+            let h = get_arg(subargs, "-h")
+                .and_then(|h| h.parse::<f64>().ok())
+                .unwrap_or(842.0);
+            let c = get_arg(subargs, "-c")
+                .and_then(|c| c.parse::<usize>().ok())
+                .unwrap_or(1);
             let out = get_arg(subargs, "-o").unwrap_or_else(|| "blank.pdf".into());
 
             match create_blank_pdf(w, h, c) {
@@ -233,11 +257,19 @@ fn main() {
 
         "add-text" => {
             let input = &subargs[0];
-            let page = get_arg(subargs, "-p").and_then(|p| p.parse::<usize>().ok()).unwrap_or(1);
+            let page = get_arg(subargs, "-p")
+                .and_then(|p| p.parse::<usize>().ok())
+                .unwrap_or(1);
             let text = get_arg(subargs, "-t").expect("-t <text> required");
-            let x = get_arg(subargs, "-x").and_then(|v| v.parse::<f64>().ok()).unwrap_or(50.0);
-            let y = get_arg(subargs, "-y").and_then(|v| v.parse::<f64>().ok()).unwrap_or(500.0);
-            let size = get_arg(subargs, "--size").and_then(|v| v.parse::<f64>().ok()).unwrap_or(14.0);
+            let x = get_arg(subargs, "-x")
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(50.0);
+            let y = get_arg(subargs, "-y")
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(500.0);
+            let size = get_arg(subargs, "--size")
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(14.0);
             let color = get_arg(subargs, "--color").unwrap_or_else(|| "#000000".into());
             let out = get_arg(subargs, "-o").unwrap_or_else(|| "output.pdf".into());
 
@@ -306,8 +338,12 @@ fn main() {
         "watermark" => {
             let input = &subargs[0];
             let text = get_arg(subargs, "-t").unwrap_or_else(|| "CONFIDENTIAL".into());
-            let opacity = get_arg(subargs, "--opacity").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.3);
-            let size = get_arg(subargs, "--size").and_then(|v| v.parse::<f32>().ok()).unwrap_or(48.0);
+            let opacity = get_arg(subargs, "--opacity")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(0.3);
+            let size = get_arg(subargs, "--size")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(48.0);
             let out = get_arg(subargs, "-o").unwrap_or_else(|| "watermarked.pdf".into());
 
             let data = fs::read(input).expect("Failed to read input");
@@ -355,7 +391,10 @@ fn main() {
             let data = fs::read(input).expect("Failed to read input");
             match verify_signature(&data, 0) {
                 Ok(sigs) => {
-                    println!("{}", serde_json::to_string_pretty(&sigs).unwrap_or_default());
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&sigs).unwrap_or_default()
+                    );
                 }
                 Err(e) => eprintln!("Error: {e}"),
             }
@@ -366,11 +405,17 @@ fn main() {
             let data = fs::read(input).expect("Failed to read input");
             match preflight_check(&data) {
                 Ok(result) => {
-                    println!("Preflight Status: {}", if result.passed { "PASS" } else { "FAIL" });
+                    println!(
+                        "Preflight Status: {}",
+                        if result.passed { "PASS" } else { "FAIL" }
+                    );
                     println!("Score: {}/100", result.score);
                     println!("Summary: {} issues found", result.issues.len());
                     for issue in result.issues {
-                        println!("  [{}] [{}] {}", issue.severity, issue.category, issue.message);
+                        println!(
+                            "  [{}] [{}] {}",
+                            issue.severity, issue.category, issue.message
+                        );
                     }
                 }
                 Err(e) => eprintln!("Error: {e}"),
@@ -379,14 +424,19 @@ fn main() {
 
         "ink-coverage" => {
             let input = &subargs[0];
-            let page = get_arg(subargs, "-p").and_then(|p| p.parse::<usize>().ok()).unwrap_or(1);
+            let page = get_arg(subargs, "-p")
+                .and_then(|p| p.parse::<usize>().ok())
+                .unwrap_or(1);
             let zero_idx = if page > 0 { page - 1 } else { 0 };
 
             let data = fs::read(input).expect("Failed to read input");
             match check_ink_coverage(&data, zero_idx) {
                 Ok(coverage) => {
                     println!("CMYK Ink Coverage for Page {page}:");
-                    println!("{}", serde_json::to_string_pretty(&coverage).unwrap_or_default());
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&coverage).unwrap_or_default()
+                    );
                 }
                 Err(e) => eprintln!("Error: {e}"),
             }
@@ -420,7 +470,9 @@ fn main() {
 
         "compress" => {
             let input = &subargs[0];
-            let quality = get_arg(subargs, "--quality").and_then(|q| q.parse::<u8>().ok()).unwrap_or(80);
+            let quality = get_arg(subargs, "--quality")
+                .and_then(|q| q.parse::<u8>().ok())
+                .unwrap_or(80);
             let out = get_arg(subargs, "-o").unwrap_or_else(|| "compressed.pdf".into());
             let data = fs::read(input).expect("Failed to read input");
             match compress_pdf_quality(&data, quality) {
@@ -428,8 +480,13 @@ fn main() {
                     let orig_len = data.len();
                     let new_len = res.len();
                     fs::write(&out, res).unwrap();
-                    println!("Compressed from {} to {} bytes ({:.1}% of original): {}",
-                        orig_len, new_len, (new_len as f64 / orig_len as f64) * 100.0, out);
+                    println!(
+                        "Compressed from {} to {} bytes ({:.1}% of original): {}",
+                        orig_len,
+                        new_len,
+                        (new_len as f64 / orig_len as f64) * 100.0,
+                        out
+                    );
                 }
                 Err(e) => eprintln!("Error: {e}"),
             }

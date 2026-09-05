@@ -1,12 +1,11 @@
-use lopdf::{Document, Object, Dictionary};
 use super::common::*;
+use lopdf::{Dictionary, Document, Object};
 
 // ===== FONT & STYLING MANAGEMENT =====
 
 // Get font information from PDF
 pub fn get_fonts(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
-    let doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let mut fonts = Vec::new();
 
@@ -16,21 +15,28 @@ pub fn get_fonts(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
             if let Ok(Object::Name(font_type)) = dict.get(b"Type") {
                 if font_type == b"Font" {
                     let mut font_info = serde_json::Map::new();
-                    
+
                     if let Ok(Object::Name(subtype)) = dict.get(b"Subtype") {
-                        font_info.insert("type".into(), serde_json::Value::String(
-                            String::from_utf8_lossy(subtype).to_string()
-                        ));
+                        font_info.insert(
+                            "type".into(),
+                            serde_json::Value::String(String::from_utf8_lossy(subtype).to_string()),
+                        );
                     }
-                    
+
                     if let Ok(Object::Name(base_font)) = dict.get(b"BaseFont") {
-                        font_info.insert("name".into(), serde_json::Value::String(
-                            String::from_utf8_lossy(base_font).to_string()
-                        ));
+                        font_info.insert(
+                            "name".into(),
+                            serde_json::Value::String(
+                                String::from_utf8_lossy(base_font).to_string(),
+                            ),
+                        );
                     }
-                    
+
                     if let Ok(Object::Integer(encoding)) = dict.get(b"Encoding") {
-                        font_info.insert("encoding".into(), serde_json::Value::Number((*encoding).into()));
+                        font_info.insert(
+                            "encoding".into(),
+                            serde_json::Value::Number((*encoding).into()),
+                        );
                     }
 
                     fonts.push(serde_json::Value::Object(font_info));
@@ -43,13 +49,8 @@ pub fn get_fonts(data: &[u8]) -> Result<Vec<serde_json::Value>, String> {
 }
 
 // Replace font in entire document
-pub fn replace_font(
-    data: &[u8],
-    old_font: &str,
-    new_font: &str,
-) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+pub fn replace_font(data: &[u8], old_font: &str, new_font: &str) -> Result<Vec<u8>, String> {
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     // Update all font references
     for (_, obj) in doc.objects.iter_mut() {
@@ -72,8 +73,7 @@ pub fn change_text_color(
     _old_color: &str,
     new_color: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -83,7 +83,9 @@ pub fn change_text_color(
 
     // Get content stream
     let content_id = if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
-        dict.get(b"Contents").ok().and_then(|o| o.as_reference().ok())
+        dict.get(b"Contents")
+            .ok()
+            .and_then(|o| o.as_reference().ok())
     } else {
         None
     };
@@ -110,9 +112,10 @@ pub fn change_text_color(
         match op.operator.as_str() {
             "rg" => {
                 // Replace color operation
-                new_operations.push(lopdf::content::Operation::new("rg", vec![
-                    Object::Real(r), Object::Real(g), Object::Real(b)
-                ]));
+                new_operations.push(lopdf::content::Operation::new(
+                    "rg",
+                    vec![Object::Real(r), Object::Real(g), Object::Real(b)],
+                ));
             }
             _ => {
                 new_operations.push(op.clone());
@@ -121,7 +124,9 @@ pub fn change_text_color(
     }
 
     // Create new content stream
-    let content = lopdf::content::Content { operations: new_operations };
+    let content = lopdf::content::Content {
+        operations: new_operations,
+    };
     let content_bytes = content.encode().map_err(|e| format!("Encode error: {e}"))?;
 
     let mut stream = lopdf::Stream::new(Dictionary::new(), content_bytes);
@@ -142,8 +147,7 @@ pub fn change_font_size(
     old_size: f32,
     new_size: f32,
 ) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -153,7 +157,9 @@ pub fn change_font_size(
 
     // Get content stream
     let content_id = if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
-        dict.get(b"Contents").ok().and_then(|o| o.as_reference().ok())
+        dict.get(b"Contents")
+            .ok()
+            .and_then(|o| o.as_reference().ok())
     } else {
         None
     };
@@ -180,10 +186,10 @@ pub fn change_font_size(
                 if op.operands.len() >= 2 {
                     if let Object::Real(size) = &op.operands[1] {
                         if (*size - old_size).abs() < 0.1 {
-                            new_operations.push(lopdf::content::Operation::new("Tf", vec![
-                                op.operands[0].clone(),
-                                Object::Real(new_size),
-                            ]));
+                            new_operations.push(lopdf::content::Operation::new(
+                                "Tf",
+                                vec![op.operands[0].clone(), Object::Real(new_size)],
+                            ));
                             continue;
                         }
                     }
@@ -197,7 +203,9 @@ pub fn change_font_size(
     }
 
     // Create new content stream
-    let content = lopdf::content::Content { operations: new_operations };
+    let content = lopdf::content::Content {
+        operations: new_operations,
+    };
     let content_bytes = content.encode().map_err(|e| format!("Encode error: {e}"))?;
 
     let mut stream = lopdf::Stream::new(Dictionary::new(), content_bytes);
