@@ -1,0 +1,60 @@
+[package]
+name = "docforge"
+version = "1.0.0"
+description = "Acrobat Pro-level PDF editor with local processing"
+authors = ["DocForge"]
+edition = "2021"
+license = "MIT"
+default-run = "docforge"
+
+[lib]
+name = "docforge"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "docforge"
+path = "src/main.rs"
+
+[[bin]]
+name = "docforge-cli"
+path = "src/bin/cli.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", features = ["relax-sign-encoding", "relax-void-encoding", "disable-encoding-assertions"] }
+
+# PDF manipulation
+lopdf = "0.35"
+flate2 = "1"
+
+# Image processing
+image = "0.25"
+imageproc = "0.25"
+ab_glyph = "0.2"
+
+# OCR - using tesseract CLI
+
+# EPUB creation
+epub-builder = "0.7"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[patch.crates-io]
+tao = { path = "../tao-patch" }

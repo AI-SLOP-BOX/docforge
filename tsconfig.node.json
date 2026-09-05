@@ -1,0 +1,5 @@
+{
+  "buildTarget": "esnext",
+  "minify": "esnext",
+  "sourcemap": true
+}

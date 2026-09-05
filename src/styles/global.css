@@ -1,0 +1,247 @@
+:root {
+  /* Apple / Adobe Pro Surface Hierarchy */
+  --bg-0: #0a0c10;
+  --bg-1: #111419;
+  --bg-2: #181d24;
+  --bg-3: #222730;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(88, 166, 255, 0.15);
+  --glass-bg: rgba(17, 20, 25, 0.85);
+  --glass-border: rgba(255, 255, 255, 0.08);
+
+  /* Borders & Dividers */
+  --border: rgba(255, 255, 255, 0.09);
+  --border-subtle: rgba(255, 255, 255, 0.04);
+  --border-bright: rgba(255, 255, 255, 0.18);
+  --border-focus: rgba(88, 166, 255, 0.6);
+
+  /* Typography */
+  --text: #f0f3f6;
+  --text-dim: #9aa5b1;
+  --text-muted: #57606a;
+
+  /* Accent & Status Colors */
+  --accent: #2f81f7;
+  --accent-hover: #388bfd;
+  --accent-dim: #1f6feb;
+  --accent-gradient: linear-gradient(135deg, #2f81f7 0%, #d23669 100%);
+  --green: #2ea043;
+  --red: #f85149;
+  --orange: #e3b341;
+  --purple: #a371f7;
+
+  /* Shadows & Radius */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 12px 36px rgba(0, 0, 0, 0.65);
+  --shadow-glow: 0 0 20px rgba(47, 129, 247, 0.25);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', 'Noto Sans JP', sans-serif;
+  background: var(--bg-0);
+  color: var(--text);
+  overflow: hidden;
+  height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.01em;
+  user-select: none;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Custom Sleek Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  transition: background 0.2s;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Base Interactive Elements */
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  outline: none;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+input, textarea, select {
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+input:focus, textarea:focus, select:focus {
+  border-color: var(--border-focus) !important;
+  box-shadow: 0 0 0 3px rgba(47, 129, 247, 0.2) !important;
+}
+
+/* Glassmorphism Classes */
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+}
+
+.subtle-hover {
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.subtle-hover:hover {
+  background: var(--bg-hover);
+}
+
+/* Keyboard Shortcut Badges */
+kbd, .kbd-badge {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  padding: 1px 5px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
+}
+
+/* Floating HUD Capsule */
+.floating-hud {
+  background: rgba(18, 22, 28, 0.82);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 28px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Inspector Card Section */
+.inspector-card {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.inspector-card-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.inspector-card-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-bottom: 10px;
+}
+
+/* Tab button pro styling */
+.editor-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: var(--radius-xs);
+  margin: 1px 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s ease;
+  background: transparent;
+}
+
+.editor-tab-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.editor-tab-btn.active {
+  background: var(--bg-active);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Cross-Platform (iPhone, iPad, Android, Mac, Linux, Windows) Adaptations */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+
+/* Safe area support for iOS Notch / Dynamic Island / Android Navigation Bar */
+body {
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+/* Touch targets & tap highlight optimization for Mobile/Tablet (iPhone, iPad, Android) */
+@media (hover: none) and (pointer: coarse) {
+  button, .editor-tab-btn {
+    min-height: 38px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Small Screens (iPhone, Android Smartphones: <= 640px) */
+@media (max-width: 640px) {
+  .desktop-only {
+    display: none !important;
+  }
+  .mobile-bottom-nav {
+    display: flex !important;
+  }
+}
+
+/* Medium Screens (iPad portrait, small tablets: 641px - 1024px) */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .tablet-compact {
+    width: 68px !important;
+  }
+}
+
