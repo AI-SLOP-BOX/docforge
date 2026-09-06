@@ -284,6 +284,81 @@ fn main() {
             }
         }
 
+        "add-image" => {
+            let input = &subargs[0];
+            let page = get_arg(subargs, "-p")
+                .and_then(|p| p.parse::<usize>().ok())
+                .unwrap_or(1);
+            let img_path = get_arg(subargs, "--image").expect("--image <img_path> required");
+            let x = get_arg(subargs, "-x")
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(50.0);
+            let y = get_arg(subargs, "-y")
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(100.0);
+            let w = get_arg(subargs, "-w")
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(150.0);
+            let h = get_arg(subargs, "-h")
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(100.0);
+            let out = get_arg(subargs, "-o").unwrap_or_else(|| "output.pdf".into());
+
+            let data = fs::read(input).expect("Failed to read input");
+            let img_data = fs::read(&img_path).expect("Failed to read image file");
+            let zero_idx = if page > 0 { page - 1 } else { 0 };
+            match add_image_to_page(&data, zero_idx, &img_data, x, y, w, h) {
+                Ok(res) => {
+                    fs::write(&out, res).unwrap();
+                    println!("Image added to page {page}: {out}");
+                }
+                Err(e) => eprintln!("Error: {e}"),
+            }
+        }
+
+        "add-header-footer" => {
+            let input = &subargs[0];
+            let header = get_arg(subargs, "--header").unwrap_or_default();
+            let footer = get_arg(subargs, "--footer").unwrap_or_default();
+            let size = get_arg(subargs, "--size")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(10.0);
+            let margin = get_arg(subargs, "--margin")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(20.0);
+            let out = get_arg(subargs, "-o").unwrap_or_else(|| "output.pdf".into());
+
+            let data = fs::read(input).expect("Failed to read input");
+            match add_header_footer(&data, &header, &footer, size, margin) {
+                Ok(res) => {
+                    fs::write(&out, res).unwrap();
+                    println!("Header/Footer added: {out}");
+                }
+                Err(e) => eprintln!("Error: {e}"),
+            }
+        }
+
+        "add-page-numbers" => {
+            let input = &subargs[0];
+            let start_num = get_arg(subargs, "--start")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(1);
+            let pos = get_arg(subargs, "--pos").unwrap_or_else(|| "bottom-center".into());
+            let size = get_arg(subargs, "--size")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(10.0);
+            let out = get_arg(subargs, "-o").unwrap_or_else(|| "output.pdf".into());
+
+            let data = fs::read(input).expect("Failed to read input");
+            match add_page_numbers(&data, &pos, size, start_num) {
+                Ok(res) => {
+                    fs::write(&out, res).unwrap();
+                    println!("Page numbers added: {out}");
+                }
+                Err(e) => eprintln!("Error: {e}"),
+            }
+        }
+
         "extract-text" => {
             let input = &subargs[0];
             let data = fs::read(input).expect("Failed to read input");

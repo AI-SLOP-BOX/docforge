@@ -22,6 +22,21 @@ pub fn add_watermark(
     let cos_r = rad.cos();
     let sin_r = rad.sin();
 
+    // Create /Helvetica font
+    let mut font_dict = Dictionary::new();
+    font_dict.set("Type", Object::Name(b"Font".to_vec()));
+    font_dict.set("Subtype", Object::Name(b"Type1".to_vec()));
+    font_dict.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+    font_dict.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+    let font_id = doc.add_object(Object::Dictionary(font_dict));
+
+    // Create ExtGState for transparency/opacity
+    let mut gs_dict = Dictionary::new();
+    gs_dict.set("Type", Object::Name(b"ExtGState".to_vec()));
+    gs_dict.set("ca", Object::Real(_opacity.clamp(0.0, 1.0)));
+    gs_dict.set("CA", Object::Real(_opacity.clamp(0.0, 1.0)));
+    let gs_id = doc.add_object(Object::Dictionary(gs_dict));
+
     for (i, &page_id) in page_ids.iter().enumerate() {
         if !all_pages && !page_indices.contains(&i) {
             continue;
@@ -39,11 +54,14 @@ pub fn add_watermark(
                 "sc",
                 vec![Object::Real(r), Object::Real(g), Object::Real(b)],
             ),
-            lopdf::content::Operation::new("gs", vec![Object::Name("GState".into())]),
+            lopdf::content::Operation::new("gs", vec![Object::Name("GSWatermark".into())]),
             lopdf::content::Operation::new("BT", vec![]),
             lopdf::content::Operation::new(
                 "Tf",
-                vec![Object::Name("Helvetica".into()), Object::Real(font_size)],
+                vec![
+                    Object::Name("WatermarkFont".into()),
+                    Object::Real(font_size),
+                ],
             ),
             lopdf::content::Operation::new("Td", vec![Object::Real(cx - 80.0), Object::Real(cy)]),
             lopdf::content::Operation::new(
@@ -74,6 +92,38 @@ pub fn add_watermark(
         let mut stream = Stream::new(Dictionary::new(), content_bytes);
         stream.dict.set("Type", Object::Name("Content".into()));
         let content_id = doc.add_object(stream);
+
+        // Register font and ExtGState in page Resources
+        let mut resources_dict = resolve_page_resources(&doc, page_id);
+        let mut fonts_dict = match resources_dict.get(b"Font") {
+            Ok(Object::Dictionary(fd)) => fd.clone(),
+            Ok(Object::Reference(f_ref)) => doc
+                .objects
+                .get(f_ref)
+                .and_then(|o| o.as_dict().ok())
+                .cloned()
+                .unwrap_or_default(),
+            _ => Dictionary::new(),
+        };
+        fonts_dict.set("WatermarkFont", Object::Reference(font_id));
+        resources_dict.set("Font", Object::Dictionary(fonts_dict));
+
+        let mut ext_gstates_dict = match resources_dict.get(b"ExtGState") {
+            Ok(Object::Dictionary(gd)) => gd.clone(),
+            Ok(Object::Reference(g_ref)) => doc
+                .objects
+                .get(g_ref)
+                .and_then(|o| o.as_dict().ok())
+                .cloned()
+                .unwrap_or_default(),
+            _ => Dictionary::new(),
+        };
+        ext_gstates_dict.set("GSWatermark", Object::Reference(gs_id));
+        resources_dict.set("ExtGState", Object::Dictionary(ext_gstates_dict));
+
+        if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
+            page_dict.set("Resources", Object::Dictionary(resources_dict));
+        }
 
         append_page_content(&mut doc, page_id, content_id)?;
     }

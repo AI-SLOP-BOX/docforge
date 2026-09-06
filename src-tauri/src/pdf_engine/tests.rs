@@ -1392,4 +1392,64 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_unchi_survives_save_reload_without_mutation() {
+        let initial_pdf = create_test_pdf(1);
+        let unchi_fixture = "これはうんちです";
+
+        // 1. Render/add text
+        let pdf_with_unchi = add_text(
+            &initial_pdf,
+            0,
+            unchi_fixture,
+            100.0,
+            500.0,
+            16.0,
+            "#000000",
+        )
+        .expect("add_text with unchi fixture must succeed");
+
+        // 2. Save to disk and reload
+        let tmp_pdf_path =
+            std::env::temp_dir().join(format!("unchi_fixture_{}.pdf", std::process::id()));
+        std::fs::write(&tmp_pdf_path, &pdf_with_unchi).expect("Write to disk");
+
+        let reloaded_bytes = std::fs::read(&tmp_pdf_path).expect("Reload from disk");
+        let reloaded_doc = Document::load_mem(&reloaded_bytes).expect("Parse reloaded PDF");
+
+        // Verify structure survives reload
+        let pids = get_page_ids(&reloaded_doc);
+        assert!(!pids.is_empty(), "Reloaded PDF must have pages");
+
+        // 3. Extract text via external pdftotext
+        let pdftotext_res = std::process::Command::new("/opt/homebrew/bin/pdftotext")
+            .arg(&tmp_pdf_path)
+            .arg("-")
+            .output()
+            .expect("pdftotext execution");
+
+        let _ = std::fs::remove_file(&tmp_pdf_path);
+
+        assert!(pdftotext_res.status.success(), "pdftotext must succeed");
+        let extracted_text = String::from_utf8_lossy(&pdftotext_res.stdout);
+
+        // 4. Strict assertions: must be exact fixture, not mutated
+        assert!(
+            extracted_text.contains(unchi_fixture),
+            "Extracted text must contain exact fixture '{unchi_fixture}'. Got:\n{extracted_text}"
+        );
+        assert!(
+            !extracted_text.contains("これはウンチです"),
+            "Fixture must NOT be mutated to katakana ウンチ"
+        );
+        assert!(
+            !extracted_text.contains("これは うんちです"),
+            "Fixture must NOT contain unwanted spaces"
+        );
+        assert!(
+            !extracted_text.contains("これはうんち です"),
+            "Fixture must NOT contain unwanted spaces"
+        );
+    }
 }
