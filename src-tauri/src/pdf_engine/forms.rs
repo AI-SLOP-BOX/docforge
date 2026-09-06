@@ -174,6 +174,30 @@ pub fn add_calculated_field(
 
 // ===== XFDF/FDF IMPORT/EXPORT =====
 
+fn xml_escape(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+fn xml_unescape(input: &str) -> String {
+    input
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
 pub fn export_xfdf(data: &[u8]) -> Result<String, String> {
     let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
@@ -267,14 +291,17 @@ pub fn export_xfdf(data: &[u8]) -> Result<String, String> {
                                 _ => "255,0,0".to_string(),
                             };
 
+                            let escaped_author = xml_escape(&author);
+                            let escaped_contents = xml_escape(&contents);
+
                             xfdf.push_str(&format!(
                                 "    <{} page=\"{}\" name=\"{}\" title=\"{}\" color=\"{}\" left=\"{}\" top=\"{}\" width=\"{}\" height=\"{}\">\n",
-                                annot_type, page_idx + 1, format!("annot_{}", ref_id.0), author, color, x, y, w, h
+                                annot_type, page_idx + 1, format!("annot_{}", ref_id.0), escaped_author, color, x, y, w, h
                             ));
-                            if !contents.is_empty() {
+                            if !escaped_contents.is_empty() {
                                 xfdf.push_str(&format!(
                                     "      <contents>{}</contents>\n",
-                                    contents
+                                    escaped_contents
                                 ));
                             }
                             xfdf.push_str(&format!("    </{}>\n", annot_type));
@@ -295,7 +322,7 @@ pub fn import_xfdf(data: &[u8], xfdf_content: &str) -> Result<Vec<u8>, String> {
     let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc);
 
-    // Simple XFDF parser (for basic annotations)
+    // Robust line/block XFDF parser supporting XML entity decoding
     let lines: Vec<&str> = xfdf_content.lines().collect();
     let mut current_type = String::new();
     let mut current_page = 0;
@@ -329,18 +356,22 @@ pub fn import_xfdf(data: &[u8], xfdf_content: &str) -> Result<Vec<u8>, String> {
             if let Some(title_start) = trimmed.find("title=\"") {
                 let title_str = &trimmed[title_start + 7..];
                 if let Some(title_end) = title_str.find('\"') {
-                    current_author = title_str[..title_end].to_string();
+                    current_author = xml_unescape(&title_str[..title_end]);
                 }
             }
         }
 
         if trimmed.starts_with("<contents>") && trimmed.ends_with("</contents>") {
-            current_contents = trimmed[10..trimmed.len() - 11].to_string();
+            let raw_c = &trimmed[10..trimmed.len() - 11];
+            current_contents = xml_unescape(raw_c);
         }
 
-        if trimmed.starts_with(&format!("<{}>", current_type))
-            || trimmed.starts_with(&format!("<{} ", current_type))
-        {
+        let is_end_tag = (!current_type.is_empty()) && (
+            trimmed == format!("</{}>", current_type)
+            || trimmed == format!("</{}>", current_type.to_lowercase())
+        );
+
+        if is_end_tag {
             if !current_type.is_empty() && current_page < page_ids.len() {
                 // Create annotation
                 let mut annot_dict = Dictionary::new();

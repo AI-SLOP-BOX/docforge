@@ -154,22 +154,38 @@ pub fn images_to_pdf(image_paths: &[String], output_path: &str) -> Result<(), St
 // ===== HTML→PDF CONVERSION =====
 
 pub fn html_to_pdf(html_content: &str, output_path: &str) -> Result<(), String> {
-    let tmp = std::env::temp_dir().join("docforge_html2pdf");
+    let unique = format!(
+        "docforge_html2pdf_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let tmp = std::env::temp_dir().join(unique);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let html_file = tmp.join("input.html");
-    std::fs::write(&html_file, html_content).map_err(|e| e.to_string())?;
+    std::fs::write(&html_file, html_content).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&tmp);
+        e.to_string()
+    })?;
 
-    // Try wkhtmltopdf first
+    // Try wkhtmltopdf (disable local-file-access by default for untrusted HTML security)
     let result = std::process::Command::new("wkhtmltopdf")
-        .arg("--enable-local-file-access")
+        .arg("--disable-local-file-access")
         .arg(&html_file)
         .arg(output_path)
         .output();
 
+    let _ = std::fs::remove_dir_all(&tmp);
+
     match result {
         Ok(out) if out.status.success() => Ok(()),
-        _ => {
-            // Fallback: use pdftoppm-based approach or return error
+        Ok(out) => Err(format!(
+            "wkhtmltopdf failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        )),
+        Err(_) => {
             Err("wkhtmltopdf not installed. Install with: brew install wkhtmltopdf".to_string())
         }
     }
@@ -178,37 +194,10 @@ pub fn html_to_pdf(html_content: &str, output_path: &str) -> Result<(), String> 
 // ===== PDF REPAIR =====
 
 pub fn repair_pdf(data: &[u8]) -> Result<Vec<u8>, String> {
-    // Attempt to repair by re-parsing and saving
-    let mut doc = Document::load_mem(data).map_err(|e| format!("Cannot parse PDF: {e}"))?;
-
-    // Try to fix common issues
-    // 1. Ensure all pages have MediaBox
-    let page_ids = get_page_ids(&doc);
-    for &page_id in &page_ids {
-        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
-            if dict.get(b"MediaBox").is_err() {
-                dict.set(
-                    "MediaBox",
-                    Object::Array(vec![
-                        Object::Real(0.0),
-                        Object::Real(0.0),
-                        Object::Real(595.0),
-                        Object::Real(842.0),
-                    ]),
-                );
-            }
-        }
-    }
-
-    // 2. Ensure trailer has Root
-    if doc.trailer.get(b"Root").is_err() {
-        let page_ids = get_page_ids(&doc);
-        if let Some(&first) = page_ids.first() {
-            doc.trailer.set("Root", Object::Reference(first));
-        }
-    }
-
-    save_doc(&mut doc)
+    // Delegate directly to repair_corrupt_pdf which salvages surviving objects
+    // and reconstructs a proper /Type /Catalog and /Type /Pages tree instead of
+    // erroneously pointing Root to a Page object.
+    super::repair::repair_corrupt_pdf(data)
 }
 
 // ===== QUALITY-BASED COMPRESSION =====
@@ -216,36 +205,55 @@ pub fn repair_pdf(data: &[u8]) -> Result<Vec<u8>, String> {
 pub fn compress_pdf_quality(data: &[u8], quality: u8) -> Result<Vec<u8>, String> {
     let mut doc = Document::load_mem(data).map_err(|e| e.to_string())?;
 
-    let page_ids = get_page_ids(&doc);
-
-    // Compress each page's content stream
-    for &page_id in &page_ids {
-        if let Some(obj) = doc.objects.get(&page_id) {
-            if let Ok(d) = obj.as_dict() {
-                if let Ok(Object::Array(_annots)) = d.get(b"Annots") {
-                    // Handle annotations if needed
-                }
-            }
-        }
-    }
-
     // Remove metadata if quality is low
     if quality < 50 {
         doc.trailer.remove(b"Info");
     }
 
-    // Rebuild all objects with compression
+    let comp_level = match quality {
+        0..=30 => 9,
+        31..=60 => 6,
+        61..=85 => 4,
+        _ => 1,
+    };
+
+    // Rebuild all uncompressed or recompressible streams with flate2 compression
     for (_, obj) in doc.objects.iter_mut() {
         if let Object::Stream(ref mut stream) = obj {
-            if stream.dict.get(b"Filter").is_err() {
-                let level = (quality as u32 * 9 / 100).min(9);
-                let _compressed =
-                    flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(level));
-                // Note: stream compression would go here
+            // Decompress existing Flate content if needed, then recompress with target level
+            let raw_data = if let Ok(filter) = stream.dict.get(b"Filter") {
+                if let Ok(filter_name) = filter.as_name() {
+                    if filter_name == b"FlateDecode" {
+                        let _ = stream.decompress();
+                        stream.content.clone()
+                    } else {
+                        // Unknown or complex filter (e.g. DCTDecode for JPEG) - keep as is
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+            } else {
+                stream.content.clone()
+            };
+
+            let mut encoder = flate2::write::ZlibEncoder::new(
+                Vec::new(),
+                flate2::Compression::new(comp_level),
+            );
+            if std::io::Write::write_all(&mut encoder, &raw_data).is_ok() {
+                if let Ok(compressed) = encoder.finish() {
+                    // Only replace if compression actually saved space or was uncompressed
+                    if compressed.len() < stream.content.len() || stream.dict.get(b"Filter").is_err() {
+                        stream.set_content(compressed);
+                        stream.dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+                    }
+                }
             }
         }
     }
 
+    doc.prune_objects();
     save_doc(&mut doc)
 }
 
@@ -259,6 +267,14 @@ pub fn add_page_numbers(
 ) -> Result<Vec<u8>, String> {
     let mut doc = Document::load_mem(data).map_err(|e| e.to_string())?;
     let page_ids = get_page_ids(&doc).clone();
+
+    // Ensure /Helvetica font resource is created and referenced
+    let mut font_dict = Dictionary::new();
+    font_dict.set("Type", Object::Name(b"Font".to_vec()));
+    font_dict.set("Subtype", Object::Name(b"Type1".to_vec()));
+    font_dict.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+    font_dict.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+    let font_id = doc.add_object(Object::Dictionary(font_dict));
 
     for (i, &page_id) in page_ids.iter().enumerate() {
         let page_num = start_number + i;
@@ -277,39 +293,46 @@ pub fn add_page_numbers(
 
         let text = format!("{page_num}");
 
-        // Get content_id first (immutable borrow)
-        let content_id = if let Some(obj) = doc.objects.get(&page_id) {
-            if let Ok(d) = obj.as_dict() {
-                if let Ok(Object::Reference(id)) = d.get(b"Contents") {
-                    Some(*id)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
+        // Format content stream safely wrapping graphics state
         let new_content = format!(
-            " q BT /Helvetica {} Tf {} {} Td ({}) Tj ET Q ",
+            " q BT /DocForgeHelv {} Tf {} {} Td ({}) Tj ET Q ",
             font_size, x, y, text
         );
 
-        if let Some(content_id) = content_id {
-            if let Some(content_obj) = doc.objects.get_mut(&content_id) {
-                if let Object::Stream(ref mut stream) = content_obj {
-                    stream.content.extend_from_slice(new_content.as_bytes());
+        // Create independent new content stream object
+        let mut new_stream = Stream::new(Dictionary::new(), new_content.into_bytes());
+        new_stream.dict.set("Type", Object::Name("Content".into()));
+        let new_cid = doc.add_object(new_stream);
+
+        // Register /DocForgeHelv font into page's Resources and attach content stream
+        if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
+            // Update Resources -> Font
+            let mut resources_dict = match page_dict.get(b"Resources") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => Dictionary::new(),
+            };
+
+            let mut fonts_dict = match resources_dict.get(b"Font") {
+                Ok(Object::Dictionary(fd)) => fd.clone(),
+                _ => Dictionary::new(),
+            };
+            fonts_dict.set("DocForgeHelv", Object::Reference(font_id));
+            resources_dict.set("Font", Object::Dictionary(fonts_dict));
+            page_dict.set("Resources", Object::Dictionary(resources_dict));
+
+            // Combine Contents safely as an Array [existing..., new_cid]
+            let updated_contents = match page_dict.get(b"Contents") {
+                Ok(Object::Reference(orig_id)) => {
+                    Object::Array(vec![Object::Reference(*orig_id), Object::Reference(new_cid)])
                 }
-            }
-        } else {
-            let mut stream = Stream::new(Dictionary::new(), new_content.into_bytes());
-            stream.dict.set("Type", Object::Name("Content".into()));
-            let new_cid = doc.add_object(stream);
-            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
-                dict.set("Contents", Object::Reference(new_cid));
-            }
+                Ok(Object::Array(orig_arr)) => {
+                    let mut arr = orig_arr.clone();
+                    arr.push(Object::Reference(new_cid));
+                    Object::Array(arr)
+                }
+                _ => Object::Reference(new_cid),
+            };
+            page_dict.set("Contents", updated_contents);
         }
     }
 

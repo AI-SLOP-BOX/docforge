@@ -53,7 +53,7 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
     let mut embedded_fonts = Vec::new();
     let mut non_embedded_fonts = Vec::new();
 
-    // Check fonts
+    // Check fonts with FontDescriptor indirect reference lookup
     for (_, obj) in &doc.objects {
         if let Object::Dictionary(dict) = obj {
             if let Ok(Object::Name(font_type)) = dict.get(b"Type") {
@@ -69,10 +69,24 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
                         })
                         .unwrap_or_else(|| "Unknown".into());
 
-                    if dict.get(b"FontFile").is_ok()
-                        || dict.get(b"FontFile2").is_ok()
-                        || dict.get(b"FontFile3").is_ok()
+                    // Check font descriptor for FontFile / FontFile2 / FontFile3
+                    let has_font_file = if let Ok(desc_ref) =
+                        dict.get(b"FontDescriptor").and_then(|o| o.as_reference())
                     {
+                        if let Some(Object::Dictionary(desc)) = doc.objects.get(&desc_ref) {
+                            desc.get(b"FontFile").is_ok()
+                                || desc.get(b"FontFile2").is_ok()
+                                || desc.get(b"FontFile3").is_ok()
+                        } else {
+                            false
+                        }
+                    } else {
+                        dict.get(b"FontFile").is_ok()
+                            || dict.get(b"FontFile2").is_ok()
+                            || dict.get(b"FontFile3").is_ok()
+                    };
+
+                    if has_font_file {
                         embedded_fonts.push(font_name.clone());
                     } else {
                         non_embedded_fonts.push(font_name.clone());
@@ -87,10 +101,13 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
         }
     }
 
-    // Check color usage
+    // Check color usage & operators across streams
     let mut uses_rgb = false;
     let mut uses_cmyk = false;
+    let mut uses_spot = false;
+    let mut overprint_enabled = false;
     let mut has_icc = false;
+    let mut max_ink_coverage = 0.0f32;
 
     for (_, obj) in &doc.objects {
         if let Object::Stream(stream) = obj {
@@ -98,15 +115,86 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
                 for op in &content.operations {
                     match op.operator.as_str() {
                         "rg" | "RG" => uses_rgb = true,
-                        "k" | "K" => uses_cmyk = true,
+                        "k" | "K" => {
+                            uses_cmyk = true;
+                            if op.operands.len() >= 4 {
+                                if let (Some(c), Some(m), Some(y), Some(k)) = (
+                                    op.operands[0].as_float().ok(),
+                                    op.operands[1].as_float().ok(),
+                                    op.operands[2].as_float().ok(),
+                                    op.operands[3].as_float().ok(),
+                                ) {
+                                    let cov = c + m + y + k;
+                                    max_ink_coverage = max_ink_coverage.max(cov);
+                                }
+                            }
+                        }
                         "cs" | "CS" => {
                             if let Some(Object::Name(name)) = op.operands.first() {
                                 if name == b"DeviceCMYK" || name == b"ICCBased" {
                                     has_icc = true;
+                                } else if name == b"Separation" {
+                                    uses_spot = true;
                                 }
                             }
                         }
+                        "gs" => {
+                            // ExtGState reference used in content stream
+                        }
                         _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    // Check ExtGState dictionaries for overprint settings
+    for (_, obj) in &doc.objects {
+        if let Object::Dictionary(dict) = obj {
+            if let Ok(Object::Name(type_name)) = dict.get(b"Type") {
+                if type_name == b"ExtGState" {
+                    if let Ok(op) = dict.get(b"OP").and_then(|o| o.as_bool()) {
+                        if op {
+                            overprint_enabled = true;
+                        }
+                    }
+                    if let Ok(op) = dict.get(b"op").and_then(|o| o.as_bool()) {
+                        if op {
+                            overprint_enabled = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Count image XObjects and analyze resolutions
+    let mut total_images = 0;
+    let mut min_dpi = 0.0f32;
+    let mut low_res_images = Vec::new();
+    let mut images_without_profile = Vec::new();
+
+    for (id, obj) in &doc.objects {
+        if let Object::Stream(stream) = obj {
+            if let Ok(Object::Name(subtype)) = stream.dict.get(b"Subtype") {
+                if subtype == b"Image" {
+                    total_images += 1;
+                    let width = stream.dict.get(b"Width").and_then(|o| o.as_float()).unwrap_or(0.0);
+                    let height = stream.dict.get(b"Height").and_then(|o| o.as_float()).unwrap_or(0.0);
+                    let has_cs = stream.dict.get(b"ColorSpace").is_ok();
+                    if !has_cs {
+                        images_without_profile.push(format!("Image_{}_{}", id.0, id.1));
+                    }
+
+                    // Estimate DPI based on 72pt default display size if dimension known
+                    if width > 0.0 && height > 0.0 {
+                        let approx_dpi = (width / 2.0).max(72.0); // conservative estimation
+                        if min_dpi == 0.0 || approx_dpi < min_dpi {
+                            min_dpi = approx_dpi;
+                        }
+                        if approx_dpi < 150.0 {
+                            low_res_images.push(format!("Image_{}_{} ({}x{})", id.0, id.1, width as u32, height as u32));
+                        }
                     }
                 }
             }
@@ -126,6 +214,17 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
             severity: "warning".into(),
             category: "Color".into(),
             message: "CMYK without ICC profile".into(),
+        });
+    }
+
+    if max_ink_coverage > 3.0 {
+        issues.push(PreflightIssue {
+            severity: "warning".into(),
+            category: "Ink".into(),
+            message: format!(
+                "Maximum CMYK operand ink coverage ({:.1}%) exceeds 300%",
+                max_ink_coverage * 100.0
+            ),
         });
     }
 
@@ -159,16 +258,16 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
         color_check: ColorCheck {
             uses_rgb,
             uses_cmyk,
-            uses_spot: false,
+            uses_spot,
             has_icc_profile: has_icc,
-            overprint_enabled: false,
-            max_ink_coverage: 0.0,
+            overprint_enabled,
+            max_ink_coverage: max_ink_coverage * 100.0,
         },
         image_check: ImageCheck {
-            total_images: 0,
-            min_dpi: 0.0,
-            low_res_images: Vec::new(),
-            images_without_profile: Vec::new(),
+            total_images,
+            min_dpi,
+            low_res_images,
+            images_without_profile,
         },
     })
 }
@@ -186,42 +285,29 @@ pub fn check_ink_coverage(data: &[u8], page_index: usize) -> Result<serde_json::
     let mut coverage_samples = Vec::new();
 
     if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
-        if let Ok(Object::Reference(content_id)) = dict.get(b"Contents") {
-            if let Some(Object::Stream(stream)) = doc.objects.get(content_id) {
+        let content_ids: Vec<OID> = match dict.get(b"Contents") {
+            Ok(Object::Reference(id)) => vec![*id],
+            Ok(Object::Array(arr)) => arr.iter().filter_map(|o| o.as_reference().ok()).collect(),
+            _ => Vec::new(),
+        };
+
+        for cid in content_ids {
+            if let Some(Object::Stream(stream)) = doc.objects.get(&cid) {
                 if let Ok(content) = lopdf::content::Content::decode(&stream.content) {
                     for op in &content.operations {
                         match op.operator.as_str() {
-                            "k" => {
+                            "k" | "K" => {
                                 if op.operands.len() >= 4 {
                                     if let (
-                                        Object::Real(c),
-                                        Object::Real(m),
-                                        Object::Real(y),
-                                        Object::Real(k),
+                                        Some(c),
+                                        Some(m),
+                                        Some(y),
+                                        Some(k),
                                     ) = (
-                                        &op.operands[0],
-                                        &op.operands[1],
-                                        &op.operands[2],
-                                        &op.operands[3],
-                                    ) {
-                                        let coverage = c + m + y + k;
-                                        max_coverage = max_coverage.max(coverage);
-                                        coverage_samples.push(coverage);
-                                    }
-                                }
-                            }
-                            "K" => {
-                                if op.operands.len() >= 4 {
-                                    if let (
-                                        Object::Real(c),
-                                        Object::Real(m),
-                                        Object::Real(y),
-                                        Object::Real(k),
-                                    ) = (
-                                        &op.operands[0],
-                                        &op.operands[1],
-                                        &op.operands[2],
-                                        &op.operands[3],
+                                        op.operands[0].as_float().ok(),
+                                        op.operands[1].as_float().ok(),
+                                        op.operands[2].as_float().ok(),
+                                        op.operands[3].as_float().ok(),
                                     ) {
                                         let coverage = c + m + y + k;
                                         max_coverage = max_coverage.max(coverage);
@@ -246,8 +332,12 @@ pub fn check_ink_coverage(data: &[u8], page_index: usize) -> Result<serde_json::
     Ok(serde_json::json!({
         "max_coverage": max_coverage * 100.0,
         "avg_coverage": avg_coverage * 100.0,
-        "warning": max_coverage > 0.3,
-        "message": if max_coverage > 0.3 { "Ink coverage exceeds 300% limit" } else { "Ink coverage within limits" },
+        "warning": max_coverage > 3.0,
+        "message": if max_coverage > 3.0 {
+            "CMYK paint operand ink coverage exceeds 300% limit"
+        } else {
+            "CMYK paint operand ink coverage within limits"
+        },
     }))
 }
 

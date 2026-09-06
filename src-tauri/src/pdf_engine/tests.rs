@@ -481,4 +481,216 @@ mod tests {
         let ts_res = add_timestamp(&[], "http://tsa.example.com");
         assert!(ts_res.is_err(), "add_timestamp must reject without real TSA connection");
     }
+
+    #[test]
+    fn test_ink_coverage_300_percent_threshold() {
+        // Create a PDF with CMYK paint operators
+        // Case 1: C=0.5, M=0.5, Y=0.5, K=0.5 -> Total 2.0 (200%), must NOT warn
+        let mut doc1 = Document::with_version("1.7");
+        let content1 = b"0.5 0.5 0.5 0.5 k 0 0 100 100 re f";
+        let stream1 = lopdf::Stream::new(Dictionary::new(), content1.to_vec());
+        let s_id1 = doc1.add_object(Object::Stream(stream1));
+
+        let mut page1 = Dictionary::new();
+        page1.set("Type", Object::Name("Page".into()));
+        page1.set("Contents", Object::Reference(s_id1));
+        page1.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(595.0),
+                Object::Real(842.0),
+            ]),
+        );
+        let p_id1 = doc1.add_object(Object::Dictionary(page1));
+
+        let mut pages1 = Dictionary::new();
+        pages1.set("Type", Object::Name("Pages".into()));
+        pages1.set("Kids", Object::Array(vec![Object::Reference(p_id1)]));
+        pages1.set("Count", Object::Integer(1));
+        let pages_id1 = doc1.add_object(Object::Dictionary(pages1));
+
+        let mut cat1 = Dictionary::new();
+        cat1.set("Type", Object::Name("Catalog".into()));
+        cat1.set("Pages", Object::Reference(pages_id1));
+        let cat_id1 = doc1.add_object(Object::Dictionary(cat1));
+        doc1.trailer.set("Root", Object::Reference(cat_id1));
+
+        let mut pdf_bytes1 = Vec::new();
+        doc1.save_to(&mut pdf_bytes1).unwrap();
+
+        let res1 = check_ink_coverage(&pdf_bytes1, 0).expect("check_ink_coverage page 0");
+        assert_eq!(
+            res1["warning"], false,
+            "200% ink coverage must not trigger >300% warning: {:?}",
+            res1
+        );
+        assert!((res1["max_coverage"].as_f64().unwrap() - 200.0).abs() < 1e-2);
+
+        // Case 2: C=0.9, M=0.9, Y=0.8, K=0.6 -> Total 3.2 (320%), MUST warn
+        let mut doc2 = Document::with_version("1.7");
+        let content2 = b"0.9 0.9 0.8 0.6 k 0 0 100 100 re f";
+        let stream2 = lopdf::Stream::new(Dictionary::new(), content2.to_vec());
+        let s_id2 = doc2.add_object(Object::Stream(stream2));
+
+        let mut page2 = Dictionary::new();
+        page2.set("Type", Object::Name("Page".into()));
+        page2.set("Contents", Object::Reference(s_id2));
+        page2.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(595.0),
+                Object::Real(842.0),
+            ]),
+        );
+        let p_id2 = doc2.add_object(Object::Dictionary(page2));
+
+        let mut pages2 = Dictionary::new();
+        pages2.set("Type", Object::Name("Pages".into()));
+        pages2.set("Kids", Object::Array(vec![Object::Reference(p_id2)]));
+        pages2.set("Count", Object::Integer(1));
+        let pages_id2 = doc2.add_object(Object::Dictionary(pages2));
+
+        let mut cat2 = Dictionary::new();
+        cat2.set("Type", Object::Name("Catalog".into()));
+        cat2.set("Pages", Object::Reference(pages_id2));
+        let cat_id2 = doc2.add_object(Object::Dictionary(cat2));
+        doc2.trailer.set("Root", Object::Reference(cat_id2));
+
+        let mut pdf_bytes2 = Vec::new();
+        doc2.save_to(&mut pdf_bytes2).unwrap();
+
+        let res2 = check_ink_coverage(&pdf_bytes2, 0).expect("check_ink_coverage page 0");
+        assert_eq!(
+            res2["warning"], true,
+            "320% ink coverage must trigger >300% warning: {:?}",
+            res2
+        );
+    }
+
+    #[test]
+    fn test_add_page_numbers_on_flatedecode_stream() {
+        // Construct a PDF with a compressed FlateDecode content stream
+        let mut doc = Document::with_version("1.7");
+        let raw_stream = b"BT /F1 12 Tf 50 700 Td (Initial Text) Tj ET";
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, raw_stream).unwrap();
+        let compressed_bytes = encoder.finish().unwrap();
+
+        let mut stream = lopdf::Stream::new(Dictionary::new(), compressed_bytes);
+        stream.dict.set("Filter", Object::Name("FlateDecode".into()));
+        let s_id = doc.add_object(Object::Stream(stream));
+
+        let mut page = Dictionary::new();
+        page.set("Type", Object::Name("Page".into()));
+        page.set("Contents", Object::Reference(s_id));
+        page.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(595.0),
+                Object::Real(842.0),
+            ]),
+        );
+        let p_id = doc.add_object(Object::Dictionary(page));
+
+        let mut pages = Dictionary::new();
+        pages.set("Type", Object::Name("Pages".into()));
+        pages.set("Kids", Object::Array(vec![Object::Reference(p_id)]));
+        pages.set("Count", Object::Integer(1));
+        let pages_id = doc.add_object(Object::Dictionary(pages));
+
+        let mut cat = Dictionary::new();
+        cat.set("Type", Object::Name("Catalog".into()));
+        cat.set("Pages", Object::Reference(pages_id));
+        let cat_id = doc.add_object(Object::Dictionary(cat));
+        doc.trailer.set("Root", Object::Reference(cat_id));
+
+        let mut pdf_data = Vec::new();
+        doc.save_to(&mut pdf_data).unwrap();
+
+        // Add page numbers
+        let numbered = add_page_numbers(&pdf_data, "bottom-center", 12.0, 1)
+            .expect("add_page_numbers must succeed");
+
+        // Inspect output PDF: Contents should now be an array and original stream intact
+        let out_doc = Document::load_mem(&numbered).expect("Load numbered PDF");
+        let out_page = out_doc.get_dictionary(p_id).expect("Get page dict");
+
+        // Contents must be Array or separate stream, never raw append to Flate stream
+        let contents_obj = out_page.get(b"Contents").expect("Contents entry exists");
+        match contents_obj {
+            Object::Array(arr) => {
+                assert_eq!(arr.len(), 2, "Contents should have 2 streams: original and new page number stream");
+            }
+            _ => panic!("Expected Contents to be an Array of streams"),
+        }
+
+        // Font resource for Helvetica must be present in Resources
+        let resources = out_page.get(b"Resources").expect("Resources exist");
+        let res_dict = resources.as_dict().expect("Resources dict");
+        assert!(res_dict.get(b"Font").is_ok(), "Font dict must be present in Resources");
+    }
+
+    #[test]
+    fn test_repair_pdf_creates_valid_catalog() {
+        let corrupt_data = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\nxref\n0 3\n0000000000 65535 f \n0000009999 00000 n \n0000009999 00000 n \ntrailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n999999\n%%EOF";
+        let repaired = repair_pdf(corrupt_data).expect("repair_pdf must succeed");
+        let repaired_doc = Document::load_mem(&repaired).expect("Repaired doc must parse");
+
+        let root_ref = repaired_doc.trailer.get(b"Root").expect("Root in trailer");
+        let root_id = root_ref.as_reference().expect("Root is reference");
+        let root_dict = repaired_doc.get_dictionary(root_id).expect("Catalog dictionary");
+        assert_eq!(
+            root_dict.get(b"Type").unwrap().as_name().unwrap(),
+            b"Catalog",
+            "Root must point to a Catalog dictionary, not a Page!"
+        );
+    }
+
+    #[test]
+    fn test_xfdf_xml_escaping_and_unescaping() {
+        let pdf = create_test_pdf(1);
+        let comment_text = "Review & approval <urgent> \"2026\" 'important'";
+
+        // Add sticky note annotation with special XML characters
+        let with_annot = add_sticky_note(
+            &pdf,
+            0,
+            100.0,
+            100.0,
+            comment_text,
+            "#FF0000",
+        )
+        .expect("add_sticky_note");
+
+        let exported_xfdf = export_xfdf(&with_annot).expect("export_xfdf");
+        assert!(
+            exported_xfdf.contains("&amp;"),
+            "XML must escape '&' to '&amp;':\n{}",
+            exported_xfdf
+        );
+        assert!(
+            exported_xfdf.contains("&lt;urgent&gt;"),
+            "XML must escape '<' and '>':\n{}",
+            exported_xfdf
+        );
+        assert!(
+            exported_xfdf.contains("&quot;"),
+            "XML must escape quotes:\n{}",
+            exported_xfdf
+        );
+
+        // Import back and verify unescaping
+        let imported_pdf = import_xfdf(&pdf, &exported_xfdf).expect("import_xfdf");
+        let annots = get_annotations(&imported_pdf).expect("get_annotations");
+        assert!(!annots.is_empty());
+        let imported_c = annots[0]["contents"].as_str().unwrap();
+        assert_eq!(imported_c, comment_text, "Imported contents must match unescaped text");
+    }
 }
