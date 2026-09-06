@@ -218,8 +218,6 @@ fn redact_text(data: Vec<u8>, search_text: String, replacement: String) -> Resul
     pdf_engine::redact_text(&data, &search_text, &replacement)
 }
 
-
-
 // ===== OPTIMIZE =====
 
 #[tauri::command]

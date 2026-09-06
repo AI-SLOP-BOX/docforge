@@ -101,10 +101,7 @@ pub fn add_digital_signature(
 
     sig_dict.set(
         "M",
-        Object::String(
-            pdf_date.into_bytes(),
-            lopdf::StringFormat::Literal,
-        ),
+        Object::String(pdf_date.into_bytes(), lopdf::StringFormat::Literal),
     );
     sig_dict.set(
         "Name",
@@ -209,7 +206,9 @@ pub fn verify_signature_in_doc(doc: &Document) -> Result<serde_json::Value, Stri
                     // V can be a direct dictionary or an indirect reference to signature dictionary
                     let sig_dict = match dict.get(b"V") {
                         Ok(Object::Dictionary(d)) => Some(d),
-                        Ok(Object::Reference(id)) => doc.objects.get(id).and_then(|o| o.as_dict().ok()),
+                        Ok(Object::Reference(id)) => {
+                            doc.objects.get(id).and_then(|o| o.as_dict().ok())
+                        }
                         _ => None,
                     };
 
@@ -217,7 +216,9 @@ pub fn verify_signature_in_doc(doc: &Document) -> Result<serde_json::Value, Stri
                         .and_then(|d| d.get(b"Name").ok())
                         .or_else(|| dict.get(b"Name").ok())
                         .and_then(|o| match o {
-                            Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).to_string()),
+                            Object::String(bytes, _) => {
+                                Some(String::from_utf8_lossy(bytes).to_string())
+                            }
                             _ => None,
                         })
                         .unwrap_or_default();
@@ -226,7 +227,9 @@ pub fn verify_signature_in_doc(doc: &Document) -> Result<serde_json::Value, Stri
                         .and_then(|d| d.get(b"Reason").ok())
                         .or_else(|| dict.get(b"Reason").ok())
                         .and_then(|o| match o {
-                            Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).to_string()),
+                            Object::String(bytes, _) => {
+                                Some(String::from_utf8_lossy(bytes).to_string())
+                            }
                             _ => None,
                         })
                         .unwrap_or_default();
@@ -253,10 +256,32 @@ pub fn verify_signature_in_doc(doc: &Document) -> Result<serde_json::Value, Stri
                         .and_then(|d| d.get(b"M").ok())
                         .or_else(|| dict.get(b"M").ok())
                         .and_then(|o| match o {
-                            Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).to_string()),
+                            Object::String(bytes, _) => {
+                                Some(String::from_utf8_lossy(bytes).to_string())
+                            }
                             _ => None,
                         })
                         .unwrap_or_else(|| "未指定".to_string());
+
+                    // Inspect ByteRange array if present
+                    let byte_range = sig_dict
+                        .and_then(|d| d.get(b"ByteRange").ok())
+                        .and_then(|o| o.as_array().ok())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|x| x.as_i64().ok())
+                                .collect::<Vec<i64>>()
+                        })
+                        .unwrap_or_default();
+
+                    let contents_len = sig_dict
+                        .and_then(|d| d.get(b"Contents").ok())
+                        .and_then(|o| o.as_str().ok())
+                        .map(|s| s.len())
+                        .unwrap_or(0);
+
+                    let has_nonzero_byterange =
+                        byte_range.len() == 4 && byte_range.iter().any(|&v| v > 0);
 
                     // Honest validation: Lopdf inspects structural PDF dictionaries, but does not perform
                     // full cryptographic PKCS#7 / CMS signature verification or ByteRange digest hashing.
@@ -264,12 +289,14 @@ pub fn verify_signature_in_doc(doc: &Document) -> Result<serde_json::Value, Stri
                         "name": if name.is_empty() { "SignatureField" } else { &name },
                         "signer": if signer.is_empty() { "未指定の署名者" } else { &signer },
                         "reason": if reason.is_empty() { "未指定" } else { &reason },
-                        "status": "unverified_structure_only",
+                        "status": if has_nonzero_byterange { "signed_unverified_cms" } else { "unverified_structure_only" },
                         "filter": filter,
                         "sub_filter": sub_filter,
+                        "byte_range": byte_range,
+                        "contents_length_bytes": contents_len,
                         "timestamp": timestamp,
                         "aatl_verified": false,
-                        "trust_level": "暗号署名エンジン未検証 (構造確認のみ)",
+                        "trust_level": if has_nonzero_byterange { "ByteRange定義済み (CMS/PKI検証が必要)" } else { "暗号署名エンジン未検証 (構造確認のみ)" },
                         "certificate_issuer": "検証未実施 (外部PKI照合が必要)",
                         "revocation_check": "未照合",
                         "integrity_verified": false,
@@ -568,8 +595,8 @@ pub fn list_certificates() -> Result<Vec<Certificate>, String> {
 
 // Import certificate from file
 pub fn import_certificate(cert_path: &str) -> Result<Certificate, String> {
-    let _cert_data =
-        std::fs::read(cert_path).map_err(|e| format!("証明書ファイルの読み込みに失敗しました: {e}"))?;
+    let _cert_data = std::fs::read(cert_path)
+        .map_err(|e| format!("証明書ファイルの読み込みに失敗しました: {e}"))?;
 
     Err("X.509証明書の完全なDER/PEMパースおよび暗号鍵インポートには外部ASN.1/PKIライブラリの連携が必要です。".into())
 }

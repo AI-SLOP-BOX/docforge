@@ -223,4 +223,3 @@ pub fn visual_diff(data1: Vec<u8>, data2: Vec<u8>, output_path: String) -> Resul
 pub fn list_digital_ids() -> Result<Vec<pdf_engine::DigitalID>, String> {
     pdf_engine::list_digital_ids()
 }
-

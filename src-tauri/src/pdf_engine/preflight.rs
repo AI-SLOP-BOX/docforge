@@ -170,14 +170,17 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
 
     // 1. First pass: scan page content streams to compute actual rendered placement dimensions for images
     // Map Image XObject name -> placed display width / height in points
-    let mut image_placement_dims: std::collections::HashMap<Vec<u8>, (f32, f32)> = std::collections::HashMap::new();
+    let mut image_placement_dims: std::collections::HashMap<Vec<u8>, (f32, f32)> =
+        std::collections::HashMap::new();
 
     let page_ids = get_page_ids(&doc);
     for &page_id in &page_ids {
         if let Some(Object::Dictionary(page_dict)) = doc.objects.get(&page_id) {
             let content_ids: Vec<OID> = match page_dict.get(b"Contents") {
                 Ok(Object::Reference(id)) => vec![*id],
-                Ok(Object::Array(arr)) => arr.iter().filter_map(|o| o.as_reference().ok()).collect(),
+                Ok(Object::Array(arr)) => {
+                    arr.iter().filter_map(|o| o.as_reference().ok()).collect()
+                }
                 _ => Vec::new(),
             };
 
@@ -197,9 +200,12 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
                                 }
                             } else if op.operator == "Do" && !op.operands.is_empty() {
                                 if let Ok(name) = op.operands[0].as_name() {
-                                    let placed_w = (current_matrix.0.hypot(current_matrix.1)).abs().max(1.0);
-                                    let placed_h = (current_matrix.2.hypot(current_matrix.3)).abs().max(1.0);
-                                    image_placement_dims.insert(name.to_vec(), (placed_w, placed_h));
+                                    let placed_w =
+                                        (current_matrix.0.hypot(current_matrix.1)).abs().max(1.0);
+                                    let placed_h =
+                                        (current_matrix.2.hypot(current_matrix.3)).abs().max(1.0);
+                                    image_placement_dims
+                                        .insert(name.to_vec(), (placed_w, placed_h));
                                 }
                             }
                         }
@@ -220,18 +226,31 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
             if let Ok(Object::Name(subtype)) = stream.dict.get(b"Subtype") {
                 if subtype == b"Image" {
                     total_images += 1;
-                    let width = stream.dict.get(b"Width").and_then(|o| o.as_float()).unwrap_or(0.0);
-                    let height = stream.dict.get(b"Height").and_then(|o| o.as_float()).unwrap_or(0.0);
+                    let width = stream
+                        .dict
+                        .get(b"Width")
+                        .and_then(|o| o.as_float())
+                        .unwrap_or(0.0);
+                    let height = stream
+                        .dict
+                        .get(b"Height")
+                        .and_then(|o| o.as_float())
+                        .unwrap_or(0.0);
 
                     // True ICC Profile check: ColorSpace must be ICCBased, or an Array [/ICCBased, stream_ref]
                     let has_icc_profile = match stream.dict.get(b"ColorSpace") {
                         Ok(Object::Name(cs_name)) => cs_name == b"ICCBased",
-                        Ok(Object::Array(arr)) => {
-                            arr.first().and_then(|o| o.as_name().ok()).map(|n| n == b"ICCBased").unwrap_or(false)
-                        }
+                        Ok(Object::Array(arr)) => arr
+                            .first()
+                            .and_then(|o| o.as_name().ok())
+                            .map(|n| n == b"ICCBased")
+                            .unwrap_or(false),
                         Ok(Object::Reference(cs_id)) => {
                             if let Some(Object::Array(arr)) = doc.objects.get(cs_id) {
-                                arr.first().and_then(|o| o.as_name().ok()).map(|n| n == b"ICCBased").unwrap_or(false)
+                                arr.first()
+                                    .and_then(|o| o.as_name().ok())
+                                    .map(|n| n == b"ICCBased")
+                                    .unwrap_or(false)
                             } else {
                                 false
                             }
@@ -370,12 +389,7 @@ pub fn check_ink_coverage(data: &[u8], page_index: usize) -> Result<serde_json::
                         match op.operator.as_str() {
                             "k" | "K" => {
                                 if op.operands.len() >= 4 {
-                                    if let (
-                                        Some(c),
-                                        Some(m),
-                                        Some(y),
-                                        Some(k),
-                                    ) = (
+                                    if let (Some(c), Some(m), Some(y), Some(k)) = (
                                         op.operands[0].as_float().ok(),
                                         op.operands[1].as_float().ok(),
                                         op.operands[2].as_float().ok(),

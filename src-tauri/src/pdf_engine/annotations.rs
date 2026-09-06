@@ -75,9 +75,7 @@ pub fn add_watermark(
         stream.dict.set("Type", Object::Name("Content".into()));
         let content_id = doc.add_object(stream);
 
-        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
-            dict.set("Contents", Object::Reference(content_id));
-        }
+        append_page_content(&mut doc, page_id, content_id)?;
     }
 
     save_doc(&mut doc)
@@ -132,16 +130,36 @@ pub fn add_highlight(
 
     let (r, g, b) = parse_hex_color(color, (1.0, 1.0, 0.0));
 
+    let x1 = x as f32;
+    let y1 = y as f32;
+    let x2 = (x + width) as f32;
+    let y2 = (y + height) as f32;
+
     let mut annot_dict = Dictionary::new();
     annot_dict.set("Type", Object::Name("Annot".into()));
     annot_dict.set("Subtype", Object::Name("Highlight".into()));
     annot_dict.set(
         "Rect",
         Object::Array(vec![
-            Object::Real(x as f32),
-            Object::Real(y as f32),
-            Object::Real((x + width) as f32),
-            Object::Real((y + height) as f32),
+            Object::Real(x1),
+            Object::Real(y1),
+            Object::Real(x2),
+            Object::Real(y2),
+        ]),
+    );
+    // PDF 32000-1 12.5.6.10: QuadPoints specifies 8 numbers [x1, y1, x2, y2, x3, y3, x4, y4]
+    // representing top-left, top-right, bottom-left, bottom-right of the text selection
+    annot_dict.set(
+        "QuadPoints",
+        Object::Array(vec![
+            Object::Real(x1),
+            Object::Real(y2),
+            Object::Real(x2),
+            Object::Real(y2),
+            Object::Real(x1),
+            Object::Real(y1),
+            Object::Real(x2),
+            Object::Real(y1),
         ]),
     );
     annot_dict.set(
@@ -181,16 +199,34 @@ pub fn add_underline(
 
     let (r, g, b) = parse_hex_color(color, (1.0, 0.0, 0.0));
 
+    let x1 = x as f32;
+    let y1 = y as f32;
+    let x2 = (x + width) as f32;
+    let y2 = (y + 2.0) as f32;
+
     let mut annot_dict = Dictionary::new();
     annot_dict.set("Type", Object::Name("Annot".into()));
     annot_dict.set("Subtype", Object::Name("Underline".into()));
     annot_dict.set(
         "Rect",
         Object::Array(vec![
-            Object::Real(x as f32),
-            Object::Real(y as f32),
-            Object::Real((x + width) as f32),
-            Object::Real((y + 2.0) as f32),
+            Object::Real(x1),
+            Object::Real(y1),
+            Object::Real(x2),
+            Object::Real(y2),
+        ]),
+    );
+    annot_dict.set(
+        "QuadPoints",
+        Object::Array(vec![
+            Object::Real(x1),
+            Object::Real(y2),
+            Object::Real(x2),
+            Object::Real(y2),
+            Object::Real(x1),
+            Object::Real(y1),
+            Object::Real(x2),
+            Object::Real(y1),
         ]),
     );
     annot_dict.set(
@@ -319,9 +355,7 @@ pub fn add_rectangle(
     let content_id = doc.add_object(stream);
 
     let page_id = page_ids[page_index];
-    if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
-        dict.set("Contents", Object::Reference(content_id));
-    }
+    append_page_content(&mut doc, page_id, content_id)?;
 
     save_doc(&mut doc)
 }
@@ -365,9 +399,7 @@ pub fn add_line(
     let content_id = doc.add_object(stream);
 
     let page_id = page_ids[page_index];
-    if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
-        dict.set("Contents", Object::Reference(content_id));
-    }
+    append_page_content(&mut doc, page_id, content_id)?;
 
     save_doc(&mut doc)
 }

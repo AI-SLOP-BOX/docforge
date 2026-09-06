@@ -17,7 +17,10 @@ pub struct TextBlock {
 }
 
 // Get all text blocks on a page for direct editing
-pub fn get_text_blocks_from_doc(doc: &Document, page_index: usize) -> Result<Vec<TextBlock>, String> {
+pub fn get_text_blocks_from_doc(
+    doc: &Document,
+    page_index: usize,
+) -> Result<Vec<TextBlock>, String> {
     let page_ids = get_page_ids(doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());

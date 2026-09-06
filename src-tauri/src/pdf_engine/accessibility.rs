@@ -15,9 +15,16 @@ pub fn check_accessibility(data: &[u8]) -> Result<serde_json::Value, String> {
             let marked = root_dict
                 .get(b"MarkInfo")
                 .and_then(|m| match m {
-                    Object::Dictionary(d) => Ok(d.get(b"Marked").ok() == Some(&Object::Boolean(true))),
+                    Object::Dictionary(d) => {
+                        Ok(d.get(b"Marked").ok() == Some(&Object::Boolean(true)))
+                    }
                     Object::Reference(id) => {
-                        let is_m = doc.objects.get(id).and_then(|o| o.as_dict().ok()).map(|d| d.get(b"Marked").ok() == Some(&Object::Boolean(true))).unwrap_or(false);
+                        let is_m = doc
+                            .objects
+                            .get(id)
+                            .and_then(|o| o.as_dict().ok())
+                            .map(|d| d.get(b"Marked").ok() == Some(&Object::Boolean(true)))
+                            .unwrap_or(false);
                         Ok(is_m)
                     }
                     _ => Ok(false),
@@ -75,7 +82,71 @@ pub fn check_accessibility(data: &[u8]) -> Result<serde_json::Value, String> {
         }));
     }
 
-    // Check each page for images without alt text
+    // Deep PDF/UA structural validation: traverse StructTreeRoot if present
+    if let Ok(root_id) = doc.trailer.get(b"Root").and_then(|o| o.as_reference()) {
+        if let Some(Object::Dictionary(ref root_dict)) = doc.objects.get(&root_id) {
+            if let Ok(struct_tree_ref) = root_dict
+                .get(b"StructTreeRoot")
+                .and_then(|o| o.as_reference())
+            {
+                let mut struct_queue = vec![struct_tree_ref];
+                let mut figures_without_alt = 0;
+                let mut table_element_count = 0;
+                let mut table_rows_found = 0;
+
+                while let Some(elem_id) = struct_queue.pop() {
+                    if let Some(Object::Dictionary(ref elem_dict)) = doc.objects.get(&elem_id) {
+                        let struct_type = elem_dict
+                            .get(b"S")
+                            .ok()
+                            .and_then(|s| s.as_name().ok())
+                            .unwrap_or(b"");
+
+                        if struct_type == b"Figure" {
+                            if elem_dict.get(b"Alt").is_err() {
+                                figures_without_alt += 1;
+                            }
+                        } else if struct_type == b"Table" {
+                            table_element_count += 1;
+                        } else if struct_type == b"TR" {
+                            table_rows_found += 1;
+                        }
+
+                        // Traverse children in /K
+                        if let Ok(k_obj) = elem_dict.get(b"K") {
+                            match k_obj {
+                                Object::Reference(child_id) => struct_queue.push(*child_id),
+                                Object::Array(arr) => {
+                                    for item in arr {
+                                        if let Ok(child_id) = item.as_reference() {
+                                            struct_queue.push(child_id);
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                if figures_without_alt > 0 {
+                    issues.push(serde_json::json!({
+                        "severity": "error",
+                        "message": format!("PDF/UA violation: {figures_without_alt} Figure structure element(s) missing required /Alt text")
+                    }));
+                }
+
+                if table_element_count > 0 && table_rows_found == 0 {
+                    issues.push(serde_json::json!({
+                        "severity": "warning",
+                        "message": "PDF/UA warning: Table element detected without standard /TR row structure hierarchy"
+                    }));
+                }
+            }
+        }
+    }
+
+    // Check each page for form fields without tooltips
     for &page_id in &page_ids {
         if let Some(Object::Dictionary(ref dict)) = doc.objects.get(&page_id) {
             if let Ok(Object::Array(annots)) = dict.get(b"Annots") {

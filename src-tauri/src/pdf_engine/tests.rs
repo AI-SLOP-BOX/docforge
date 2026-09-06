@@ -295,7 +295,9 @@ mod tests {
         let doc = Document::load_mem(&signed).expect("Load signed PDF");
         let result = verify_signature_in_doc(&doc).expect("Verify signature structure");
 
-        let sigs = result["signatures"].as_array().expect("Must have signatures array");
+        let sigs = result["signatures"]
+            .as_array()
+            .expect("Must have signatures array");
         assert_eq!(sigs.len(), 1);
         let sig0 = &sigs[0];
 
@@ -401,7 +403,7 @@ mod tests {
         let mut doc = Document::with_version("1.7");
         let pages_id = doc.add_object(Object::Dictionary(Dictionary::new()));
         let content = format!("BT /F1 12 Tf 50 750 Td ({text_to_replace}) Tj ET");
-        
+
         // Compress content stream with FlateDecode
         use flate2::write::ZlibEncoder;
         use flate2::Compression;
@@ -473,13 +475,19 @@ mod tests {
     fn test_empty_mock_security_responses() {
         // Confirm no fake digital IDs or fake certificates are returned
         let ids = list_digital_ids().expect("list_digital_ids must succeed");
-        assert!(ids.is_empty(), "list_digital_ids must be empty when no certificates enrolled");
+        assert!(
+            ids.is_empty(),
+            "list_digital_ids must be empty when no certificates enrolled"
+        );
 
         let certs = list_certificates().expect("list_certificates must succeed");
         assert!(certs.is_empty(), "list_certificates must be empty");
 
         let ts_res = add_timestamp(&[], "http://tsa.example.com");
-        assert!(ts_res.is_err(), "add_timestamp must reject without real TSA connection");
+        assert!(
+            ts_res.is_err(),
+            "add_timestamp must reject without real TSA connection"
+        );
     }
 
     #[test]
@@ -582,7 +590,9 @@ mod tests {
         let compressed_bytes = encoder.finish().unwrap();
 
         let mut stream = lopdf::Stream::new(Dictionary::new(), compressed_bytes);
-        stream.dict.set("Filter", Object::Name("FlateDecode".into()));
+        stream
+            .dict
+            .set("Filter", Object::Name("FlateDecode".into()));
         let s_id = doc.add_object(Object::Stream(stream));
 
         let mut page = Dictionary::new();
@@ -626,7 +636,11 @@ mod tests {
         let contents_obj = out_page.get(b"Contents").expect("Contents entry exists");
         match contents_obj {
             Object::Array(arr) => {
-                assert_eq!(arr.len(), 2, "Contents should have 2 streams: original and new page number stream");
+                assert_eq!(
+                    arr.len(),
+                    2,
+                    "Contents should have 2 streams: original and new page number stream"
+                );
             }
             _ => panic!("Expected Contents to be an Array of streams"),
         }
@@ -634,7 +648,10 @@ mod tests {
         // Font resource for Helvetica must be present in Resources
         let resources = out_page.get(b"Resources").expect("Resources exist");
         let res_dict = resources.as_dict().expect("Resources dict");
-        assert!(res_dict.get(b"Font").is_ok(), "Font dict must be present in Resources");
+        assert!(
+            res_dict.get(b"Font").is_ok(),
+            "Font dict must be present in Resources"
+        );
     }
 
     #[test]
@@ -645,7 +662,9 @@ mod tests {
 
         let root_ref = repaired_doc.trailer.get(b"Root").expect("Root in trailer");
         let root_id = root_ref.as_reference().expect("Root is reference");
-        let root_dict = repaired_doc.get_dictionary(root_id).expect("Catalog dictionary");
+        let root_dict = repaired_doc
+            .get_dictionary(root_id)
+            .expect("Catalog dictionary");
         assert_eq!(
             root_dict.get(b"Type").unwrap().as_name().unwrap(),
             b"Catalog",
@@ -659,15 +678,8 @@ mod tests {
         let comment_text = "Review & approval <urgent> \"2026\" 'important'";
 
         // Add sticky note annotation with special XML characters
-        let with_annot = add_sticky_note(
-            &pdf,
-            0,
-            100.0,
-            100.0,
-            comment_text,
-            "#FF0000",
-        )
-        .expect("add_sticky_note");
+        let with_annot = add_sticky_note(&pdf, 0, 100.0, 100.0, comment_text, "#FF0000")
+            .expect("add_sticky_note");
 
         let exported_xfdf = export_xfdf(&with_annot).expect("export_xfdf");
         assert!(
@@ -691,11 +703,20 @@ mod tests {
         let annots = get_annotations(&imported_pdf).expect("get_annotations");
         assert!(!annots.is_empty());
         let imported_c = annots[0]["contents"].as_str().unwrap();
-        assert_eq!(imported_c, comment_text, "Imported contents must match unescaped text");
+        assert_eq!(
+            imported_c, comment_text,
+            "Imported contents must match unescaped text"
+        );
         let imported_x = annots[0]["x"].as_f64().unwrap();
         let imported_y = annots[0]["y"].as_f64().unwrap();
-        assert_eq!(imported_x, 100.0, "Imported annotation X must match exported left");
-        assert_eq!(imported_y, 100.0, "Imported annotation Y must match exported top");
+        assert_eq!(
+            imported_x, 100.0,
+            "Imported annotation X must match exported left"
+        );
+        assert_eq!(
+            imported_y, 100.0,
+            "Imported annotation Y must match exported top"
+        );
     }
 
     #[test]
@@ -745,7 +766,8 @@ mod tests {
         let mut pdf_data = Vec::new();
         doc.save_to(&mut pdf_data).unwrap();
 
-        let numbered = add_page_numbers(&pdf_data, "bottom-center", 10.0, 1).expect("add_page_numbers");
+        let numbered =
+            add_page_numbers(&pdf_data, "bottom-center", 10.0, 1).expect("add_page_numbers");
         let out_doc = Document::load_mem(&numbered).expect("load numbered doc");
         let page_dict = out_doc.get_dictionary(p_id).expect("get page");
         let res = page_dict.get(b"Resources").expect("Resources entry");
@@ -754,9 +776,19 @@ mod tests {
             Object::Reference(id) => out_doc.get_dictionary(*id).expect("get indirect dict"),
             _ => panic!("Expected dictionary or reference"),
         };
-        let font_dict = res_dict.get(b"Font").expect("Font subdict").as_dict().expect("Font dict");
-        assert!(font_dict.get(b"F1").is_ok(), "Pre-existing F1 font must NOT be wiped out!");
-        assert!(font_dict.get(b"DocForgeHelv").is_ok(), "DocForgeHelv font must be added!");
+        let font_dict = res_dict
+            .get(b"Font")
+            .expect("Font subdict")
+            .as_dict()
+            .expect("Font dict");
+        assert!(
+            font_dict.get(b"F1").is_ok(),
+            "Pre-existing F1 font must NOT be wiped out!"
+        );
+        assert!(
+            font_dict.get(b"DocForgeHelv").is_ok(),
+            "DocForgeHelv font must be added!"
+        );
     }
 
     #[test]
@@ -765,11 +797,23 @@ mod tests {
 
         // Build /Names -> /JavaScript and /EmbeddedFiles
         let mut js_dict = Dictionary::new();
-        js_dict.set("Names", Object::Array(vec![Object::String(b"TestJS".to_vec(), lopdf::StringFormat::Literal)]));
+        js_dict.set(
+            "Names",
+            Object::Array(vec![Object::String(
+                b"TestJS".to_vec(),
+                lopdf::StringFormat::Literal,
+            )]),
+        );
         let js_id = doc.add_object(Object::Dictionary(js_dict));
 
         let mut ef_dict = Dictionary::new();
-        ef_dict.set("Names", Object::Array(vec![Object::String(b"Malware.exe".to_vec(), lopdf::StringFormat::Literal)]));
+        ef_dict.set(
+            "Names",
+            Object::Array(vec![Object::String(
+                b"Malware.exe".to_vec(),
+                lopdf::StringFormat::Literal,
+            )]),
+        );
         let ef_id = doc.add_object(Object::Dictionary(ef_dict));
 
         let mut names_dict = Dictionary::new();
@@ -807,17 +851,545 @@ mod tests {
         doc.save_to(&mut pdf_data).unwrap();
 
         let (sanitized_bytes, summary) = sanitize_document(&pdf_data).expect("sanitize_document");
-        assert!(summary.javascript_removed, "Must report javascript removed from Names tree");
-        assert!(summary.attachments_removed > 0, "Must report attachments removed from Names tree");
+        assert!(
+            summary.javascript_removed,
+            "Must report javascript removed from Names tree"
+        );
+        assert!(
+            summary.attachments_removed > 0,
+            "Must report attachments removed from Names tree"
+        );
 
         let clean_doc = Document::load_mem(&sanitized_bytes).expect("load clean doc");
-        let root = clean_doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let root = clean_doc
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
         let root_dict = clean_doc.get_dictionary(root).unwrap();
 
         if let Ok(n_ref) = root_dict.get(b"Names").and_then(|o| o.as_reference()) {
             let n_dict = clean_doc.get_dictionary(n_ref).unwrap();
-            assert!(!n_dict.has(b"JavaScript"), "Names.JavaScript must be removed!");
-            assert!(!n_dict.has(b"EmbeddedFiles"), "Names.EmbeddedFiles must be removed!");
+            assert!(
+                !n_dict.has(b"JavaScript"),
+                "Names.JavaScript must be removed!"
+            );
+            assert!(
+                !n_dict.has(b"EmbeddedFiles"),
+                "Names.EmbeddedFiles must be removed!"
+            );
+        }
+    }
+
+    #[test]
+    fn test_deep_redact_physical_image_raster_eradication() {
+        // Create an image with known pixels (e.g. 100x100 all white 255)
+        let mut img = image::RgbImage::new(100, 100);
+        for pixel in img.pixels_mut() {
+            *pixel = image::Rgb([255, 255, 255]);
+        }
+        let temp_img_path =
+            std::env::temp_dir().join(format!("redact_test_img_{}.png", std::process::id()));
+        img.save(&temp_img_path).expect("Save test image");
+
+        let temp_pdf_path =
+            std::env::temp_dir().join(format!("redact_test_pdf_{}.pdf", std::process::id()));
+        crate::pdf_engine::convert::images_to_pdf(
+            &[temp_img_path.to_string_lossy().to_string()],
+            &temp_pdf_path.to_string_lossy().to_string(),
+        )
+        .expect("Create PDF with image");
+
+        let initial_pdf = std::fs::read(&temp_pdf_path).expect("Read test PDF");
+        let _ = std::fs::remove_file(&temp_img_path);
+        let _ = std::fs::remove_file(&temp_pdf_path);
+
+        let _initial_doc = Document::load_mem(&initial_pdf).expect("Load initial PDF");
+
+        // Perform deep redaction on page 0 overlapping part of the image
+        // Placed width = 100 * 72 / 96 = 75 pt, height = 75 pt
+        // Redact rectangle [10, 10, 30, 30] in black #000000
+        let redacted_pdf = deep_redact(&initial_pdf, 0, 10.0, 10.0, 30.0, 30.0, "#000000")
+            .expect("Deep redaction must succeed");
+
+        let redacted_doc = Document::load_mem(&redacted_pdf).expect("Load redacted PDF");
+        // Inspect the image stream in the redacted doc
+        let mut found_modified_image = false;
+        for (_id, obj) in redacted_doc.objects.iter() {
+            if let Object::Stream(stream) = obj {
+                let subtype = stream
+                    .dict
+                    .get(b"Subtype")
+                    .ok()
+                    .and_then(|s| s.as_name().ok());
+                if subtype == Some(b"Image") {
+                    let decoded_bytes = stream
+                        .decompressed_content()
+                        .unwrap_or_else(|_| stream.content.clone());
+                    let load_res = image::load_from_memory(&decoded_bytes)
+                        .or_else(|_| image::load_from_memory(&stream.content));
+                    if let Ok(dyn_img) = load_res {
+                        let rgb = dyn_img.to_rgb8();
+                        let has_black = rgb.pixels().any(|p| p[0] == 0 && p[1] == 0 && p[2] == 0);
+                        assert!(
+                            has_black,
+                            "Image raster must physically contain erased solid black pixels!"
+                        );
+                        found_modified_image = true;
+                    }
+                }
+            }
+        }
+        assert!(
+            found_modified_image,
+            "Must find and verify the redacted image XObject"
+        );
+    }
+
+    #[test]
+    fn test_pdf_x_embeds_real_icc_profile_stream() {
+        let mut doc = Document::with_version("1.6");
+        let mut page = Dictionary::new();
+        page.set("Type", Object::Name("Page".into()));
+        page.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(595.0),
+                Object::Real(842.0),
+            ]),
+        );
+        let p_id = doc.add_object(Object::Dictionary(page));
+
+        let mut pages = Dictionary::new();
+        pages.set("Type", Object::Name("Pages".into()));
+        pages.set("Kids", Object::Array(vec![Object::Reference(p_id)]));
+        pages.set("Count", Object::Integer(1));
+        let pages_id = doc.add_object(Object::Dictionary(pages));
+
+        let mut cat = Dictionary::new();
+        cat.set("Type", Object::Name("Catalog".into()));
+        cat.set("Pages", Object::Reference(pages_id));
+        let cat_id = doc.add_object(Object::Dictionary(cat));
+        doc.trailer.set("Root", Object::Reference(cat_id));
+
+        let mut pdf_data = Vec::new();
+        doc.save_to(&mut pdf_data).unwrap();
+
+        // Convert to PDF/X-4
+        let pdfx_bytes = crate::pdf_engine::pdf_x::convert_to_pdfx_standard(
+            &pdf_data,
+            "PDF/X-4",
+            "Japan Color 2001 Coated",
+        )
+        .expect("convert_to_pdfx_standard");
+
+        let pdfx_doc = Document::load_mem(&pdfx_bytes).expect("Load converted PDF/X");
+        let root = pdfx_doc
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let root_dict = pdfx_doc.get_dictionary(root).unwrap();
+
+        let intents = root_dict.get(b"OutputIntents").unwrap().as_array().unwrap();
+        assert!(!intents.is_empty(), "Must have OutputIntents");
+        let intent_ref = intents[0].as_reference().unwrap();
+        let intent_dict = pdfx_doc.get_dictionary(intent_ref).unwrap();
+
+        assert_eq!(
+            intent_dict.get(b"S").unwrap().as_name().unwrap(),
+            b"GTS_PDFX"
+        );
+        let dest_prof_ref = intent_dict
+            .get(b"DestOutputProfile")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+
+        // Verify DestOutputProfile is an actual Stream with /N 4
+        let stream = pdfx_doc
+            .get_object(dest_prof_ref)
+            .unwrap()
+            .as_stream()
+            .unwrap();
+        assert_eq!(stream.dict.get(b"N").unwrap().as_i64().unwrap(), 4);
+        assert!(
+            !stream.content.is_empty(),
+            "ICC profile stream content must not be empty"
+        );
+
+        // Validate via validate_pdfx_compliance
+        let report = crate::pdf_engine::pdf_x::validate_pdfx_compliance(&pdfx_bytes, "PDF/X-4")
+            .expect("validate_pdfx_compliance");
+        assert!(
+            report.is_compliant,
+            "PDF/X-4 must pass preflight compliance check"
+        );
+        assert!(
+            report
+                .passed_checks
+                .iter()
+                .any(|c| c.contains("DestOutputProfile")),
+            "Passed checks must report embedded DestOutputProfile ICC stream"
+        );
+    }
+
+    #[test]
+    fn test_tsv_geometry_parsing() {
+        let sample_tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n\
+1\t1\t0\t0\t0\t0\t0\t0\t500\t800\t-1\t\n\
+5\t1\t1\t1\t1\t1\t50\t100\t80\t20\t95\tDocForge\n\
+5\t1\t1\t1\t1\t2\t140\t100\t60\t20\t92\tSuite";
+
+        let (text, avg_conf, suspects, words) = crate::ocr_engine::parse_tsv_words(sample_tsv);
+        assert_eq!(text.trim(), "DocForge Suite");
+        assert!(avg_conf > 90.0);
+        assert_eq!(suspects.len(), 0);
+        assert_eq!(words.len(), 2);
+        assert_eq!(words[0].text, "DocForge");
+        assert_eq!(words[0].left, 50.0);
+        assert_eq!(words[0].top, 100.0);
+        assert_eq!(words[0].width, 80.0);
+        assert_eq!(words[0].height, 20.0);
+        assert_eq!(words[1].text, "Suite");
+    }
+
+    #[test]
+    fn test_phase1_contents_preservation_across_all_ops() {
+        // Build test PDF with initial text and vector shapes
+        let initial_pdf = create_test_pdf(1);
+
+        // 1. add_text should preserve existing page contents
+        let with_text = add_text(&initial_pdf, 0, "Added Label", 50.0, 500.0, 14.0, "#FF0000")
+            .expect("add_text must succeed");
+        let doc1 = Document::load_mem(&with_text).expect("load with_text");
+        let pids1 = get_page_ids(&doc1);
+        let pdict1 = doc1.get_dictionary(pids1[0]).expect("page dict 1");
+        let contents1 = pdict1.get(b"Contents").expect("contents 1");
+        // Must be Array with 2 elements (original + added)
+        assert!(matches!(contents1, Object::Array(arr) if arr.len() == 2));
+
+        // 2. add_watermark should preserve existing page contents
+        let with_wm = add_watermark(
+            &with_text,
+            "CONFIDENTIAL",
+            0.5,
+            45.0,
+            30.0,
+            "#888888",
+            true,
+            &[],
+        )
+        .expect("add_watermark must succeed");
+        let doc2 = Document::load_mem(&with_wm).expect("load with_wm");
+        let pdict2 = doc2.get_dictionary(pids1[0]).expect("page dict 2");
+        let contents2 = pdict2.get(b"Contents").expect("contents 2");
+        assert!(matches!(contents2, Object::Array(arr) if arr.len() == 3));
+
+        // 3. add_header_footer should preserve existing contents
+        let with_hf = add_header_footer(&with_wm, "Header {page}/{total}", "Footer", 10.0, 20.0)
+            .expect("add_header_footer must succeed");
+        let doc3 = Document::load_mem(&with_hf).expect("load with_hf");
+        let pdict3 = doc3.get_dictionary(pids1[0]).expect("page dict 3");
+        let contents3 = pdict3.get(b"Contents").expect("contents 3");
+        assert!(matches!(contents3, Object::Array(arr) if arr.len() == 4));
+
+        // 4. add_bates_number should preserve existing contents
+        let with_bates = add_bates_number(&with_hf, "BATES-", 100, 10.0, 20.0)
+            .expect("add_bates_number must succeed");
+        let doc4 = Document::load_mem(&with_bates).expect("load with_bates");
+        let pdict4 = doc4.get_dictionary(pids1[0]).expect("page dict 4");
+        let contents4 = pdict4.get(b"Contents").expect("contents 4");
+        assert!(matches!(contents4, Object::Array(arr) if arr.len() == 5));
+    }
+
+    #[test]
+    fn test_phase1_protect_pdf_safety_rejection() {
+        let initial_pdf = create_test_pdf(1);
+        let res = protect_pdf(&initial_pdf, "secret_password");
+        assert!(
+            res.is_err(),
+            "protect_pdf must refuse to emit broken pseudo-encrypted PDF"
+        );
+        let err_msg = res.unwrap_err();
+        assert!(err_msg.contains("Standard Security Handler") || err_msg.contains("暗号化"));
+    }
+
+    #[test]
+    fn test_phase2_portfolio_valid_catalog_pages_and_names() {
+        let tmp_file1 = std::env::temp_dir().join("portfolio_item1.txt");
+        let tmp_file2 = std::env::temp_dir().join("portfolio_item2.txt");
+        std::fs::write(&tmp_file1, b"Hello file 1").unwrap();
+        std::fs::write(&tmp_file2, b"Hello file 2").unwrap();
+
+        let out_path = std::env::temp_dir().join("portfolio_test_out.pdf");
+        let paths = vec![
+            tmp_file1.to_string_lossy().to_string(),
+            tmp_file2.to_string_lossy().to_string(),
+        ];
+
+        create_pdf_portfolio(&paths, &out_path.to_string_lossy()).expect("create_pdf_portfolio");
+        let pdf_bytes = std::fs::read(&out_path).expect("read portfolio");
+        let _ = std::fs::remove_file(&out_path);
+        let _ = std::fs::remove_file(&tmp_file1);
+        let _ = std::fs::remove_file(&tmp_file2);
+
+        let doc = Document::load_mem(&pdf_bytes).expect("Load portfolio PDF");
+        let root_ref = doc
+            .trailer
+            .get(b"Root")
+            .expect("Root must exist")
+            .as_reference()
+            .unwrap();
+        let root_dict = doc.get_dictionary(root_ref).expect("Catalog dictionary");
+
+        // 1. /Type /Catalog
+        assert_eq!(
+            root_dict.get(b"Type").unwrap().as_name().unwrap(),
+            b"Catalog"
+        );
+
+        // 2. /Pages must exist
+        let pages_ref = root_dict
+            .get(b"Pages")
+            .expect("Pages must exist")
+            .as_reference()
+            .unwrap();
+        let pages_dict = doc.get_dictionary(pages_ref).expect("Pages dictionary");
+        assert_eq!(
+            pages_dict.get(b"Type").unwrap().as_name().unwrap(),
+            b"Pages"
+        );
+
+        // 3. /Collection must exist
+        let coll_ref = root_dict
+            .get(b"Collection")
+            .expect("Collection must exist")
+            .as_reference()
+            .unwrap();
+        let coll_dict = doc.get_dictionary(coll_ref).expect("Collection dictionary");
+        assert_eq!(
+            coll_dict.get(b"Type").unwrap().as_name().unwrap(),
+            b"Collection"
+        );
+
+        // 4. /Names -> /EmbeddedFiles name tree
+        let names_ref = root_dict
+            .get(b"Names")
+            .expect("Names must exist")
+            .as_reference()
+            .unwrap();
+        let names_dict = doc.get_dictionary(names_ref).expect("Names dictionary");
+        let ef_tree_ref = names_dict
+            .get(b"EmbeddedFiles")
+            .expect("EmbeddedFiles tree")
+            .as_reference()
+            .unwrap();
+        let ef_tree = doc.get_dictionary(ef_tree_ref).expect("EF tree dictionary");
+        let ef_names = ef_tree
+            .get(b"Names")
+            .expect("Names array")
+            .as_array()
+            .unwrap();
+        assert_eq!(
+            ef_names.len(),
+            4,
+            "2 files = 4 array items (name + filespec ref)"
+        );
+    }
+
+    #[test]
+    fn test_phase2_bookmark_tree_outlines_hierarchy() {
+        let initial_pdf = create_test_pdf(3);
+
+        // Add 2 bookmarks
+        let bm1 = add_bookmark(&initial_pdf, "Chapter 1", 0).expect("add bookmark 1");
+        let bm2 = add_bookmark(&bm1, "Chapter 2", 1).expect("add bookmark 2");
+
+        let doc = Document::load_mem(&bm2).expect("Load bookmarked PDF");
+        let root_ref = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let root_dict = doc.get_dictionary(root_ref).unwrap();
+
+        let outlines_ref = root_dict
+            .get(b"Outlines")
+            .expect("Outlines must exist in Catalog")
+            .as_reference()
+            .unwrap();
+        let outlines = doc
+            .get_dictionary(outlines_ref)
+            .expect("Outlines dictionary");
+        assert_eq!(
+            outlines.get(b"Type").unwrap().as_name().unwrap(),
+            b"Outlines"
+        );
+        assert_eq!(outlines.get(b"Count").unwrap().as_i64().unwrap(), 2);
+
+        let first_ref = outlines
+            .get(b"First")
+            .expect("First item")
+            .as_reference()
+            .unwrap();
+        let last_ref = outlines
+            .get(b"Last")
+            .expect("Last item")
+            .as_reference()
+            .unwrap();
+        assert_ne!(
+            first_ref, last_ref,
+            "Two bookmarks must have distinct First and Last"
+        );
+
+        let first_dict = doc.get_dictionary(first_ref).unwrap();
+        let last_dict = doc.get_dictionary(last_ref).unwrap();
+
+        assert_eq!(
+            first_dict.get(b"Title").unwrap().as_str().unwrap(),
+            b"Chapter 1"
+        );
+        assert_eq!(
+            last_dict.get(b"Title").unwrap().as_str().unwrap(),
+            b"Chapter 2"
+        );
+
+        assert_eq!(
+            first_dict.get(b"Parent").unwrap().as_reference().unwrap(),
+            outlines_ref
+        );
+        assert_eq!(
+            last_dict.get(b"Parent").unwrap().as_reference().unwrap(),
+            outlines_ref
+        );
+
+        assert_eq!(
+            first_dict.get(b"Next").unwrap().as_reference().unwrap(),
+            last_ref
+        );
+        assert_eq!(
+            last_dict.get(b"Prev").unwrap().as_reference().unwrap(),
+            first_ref
+        );
+    }
+
+    #[test]
+    fn test_phase2_annotation_quadpoints_generation() {
+        let initial_pdf = create_test_pdf(1);
+
+        // Add Highlight
+        let highlighted = add_highlight(&initial_pdf, 0, 72.0, 700.0, 150.0, 18.0, "#FFFF00")
+            .expect("add_highlight");
+        let doc1 = Document::load_mem(&highlighted).expect("load highlighted");
+        let pids1 = get_page_ids(&doc1);
+        let pdict1 = doc1.get_dictionary(pids1[0]).unwrap();
+        let annots1 = pdict1.get(b"Annots").unwrap().as_array().unwrap();
+        let annot1_ref = annots1[0].as_reference().unwrap();
+        let annot1_dict = doc1.get_dictionary(annot1_ref).unwrap();
+
+        assert_eq!(
+            annot1_dict.get(b"Subtype").unwrap().as_name().unwrap(),
+            b"Highlight"
+        );
+        let qp = annot1_dict
+            .get(b"QuadPoints")
+            .expect("QuadPoints must exist")
+            .as_array()
+            .unwrap();
+        assert_eq!(qp.len(), 8, "QuadPoints must be 8 numbers");
+
+        // Add Underline
+        let underlined =
+            add_underline(&initial_pdf, 0, 72.0, 700.0, 150.0, "#FF0000").expect("add_underline");
+        let doc2 = Document::load_mem(&underlined).expect("load underlined");
+        let pdict2 = doc2.get_dictionary(pids1[0]).unwrap();
+        let annots2 = pdict2.get(b"Annots").unwrap().as_array().unwrap();
+        let annot2_ref = annots2[0].as_reference().unwrap();
+        let annot2_dict = doc2.get_dictionary(annot2_ref).unwrap();
+
+        assert_eq!(
+            annot2_dict.get(b"Subtype").unwrap().as_name().unwrap(),
+            b"Underline"
+        );
+        let qp2 = annot2_dict
+            .get(b"QuadPoints")
+            .expect("QuadPoints must exist")
+            .as_array()
+            .unwrap();
+        assert_eq!(qp2.len(), 8, "QuadPoints must be 8 numbers");
+    }
+
+    #[test]
+    fn test_phase3_unicode_font_pipeline_cjk_extraction_and_pdftotext() {
+        let initial_pdf = create_test_pdf(1);
+
+        // Mandatory regression strings:
+        // 1. "これはうんちです"
+        // 2. "文書作成テスト"
+        // 3. "こんにちは世界"
+        // 4. "PDFテスト 123 ABC"
+        let strings_to_test = vec![
+            "これはうんちです",
+            "文書作成テスト",
+            "こんにちは世界",
+            "PDFテスト 123 ABC",
+        ];
+
+        let mut current_pdf = initial_pdf;
+        let mut y = 650.0;
+        for s in &strings_to_test {
+            current_pdf = add_text(&current_pdf, 0, s, 50.0, y, 14.0, "#000000")
+                .expect("add_text with Unicode string must succeed");
+            y -= 40.0;
+        }
+
+        // Verify Type0 and ToUnicode CMap in PDF object graph
+        let doc = Document::load_mem(&current_pdf).expect("Load Unicode PDF");
+        let mut found_type0 = false;
+        let mut found_tounicode_cmap = false;
+
+        for (_, obj) in &doc.objects {
+            if let Object::Dictionary(dict) = obj {
+                if dict.get(b"Type").ok().and_then(|o| o.as_name().ok()) == Some(b"Font")
+                    && dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok()) == Some(b"Type0")
+                {
+                    found_type0 = true;
+                    if dict.get(b"ToUnicode").is_ok() {
+                        found_tounicode_cmap = true;
+                    }
+                }
+            }
+        }
+
+        assert!(found_type0, "Must have Type0 Font in document");
+        assert!(
+            found_tounicode_cmap,
+            "Must have ToUnicode CMap attached to Type0 Font"
+        );
+
+        // External verification via pdftotext CLI
+        let tmp_pdf_path =
+            std::env::temp_dir().join(format!("cjk_test_{}.pdf", std::process::id()));
+        std::fs::write(&tmp_pdf_path, &current_pdf).unwrap();
+
+        let pdftotext_res = std::process::Command::new("/opt/homebrew/bin/pdftotext")
+            .arg(&tmp_pdf_path)
+            .arg("-")
+            .output();
+
+        let _ = std::fs::remove_file(&tmp_pdf_path);
+
+        if let Ok(output) = pdftotext_res {
+            if output.status.success() {
+                let extracted_text = String::from_utf8_lossy(&output.stdout);
+                for target_str in &strings_to_test {
+                    assert!(
+                        extracted_text.contains(target_str),
+                        "pdftotext output must contain exact Unicode string '{target_str}'. Got: {extracted_text}"
+                    );
+                }
+            }
         }
     }
 }

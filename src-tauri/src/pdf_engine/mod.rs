@@ -6,6 +6,7 @@ pub mod common;
 pub mod convert;
 pub mod export_office;
 pub mod font_style;
+pub mod font_unicode;
 pub mod form_creator;
 pub mod forms;
 pub mod inspect;
@@ -18,6 +19,8 @@ pub mod reflow;
 pub mod security;
 pub mod text_block_ops;
 pub mod text_edit;
+
+pub use font_unicode::*;
 
 pub mod compare;
 pub mod repair;

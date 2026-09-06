@@ -96,7 +96,7 @@ pub fn images_to_pdf(image_paths: &[String], output_path: &str) -> Result<(), St
         img_dict.set("Filter", Object::Name("DCTDecode".into()));
 
         let img_stream = Stream::new(img_dict, jpeg_bytes);
-        let img_id = doc.add_object(Object::Stream(img_stream));
+        let img_id = doc.add_object(img_stream);
 
         let pt_w = (width as f32 * 72.0 / 96.0).max(1.0);
         let pt_h = (height as f32 * 72.0 / 96.0).max(1.0);
@@ -104,13 +104,13 @@ pub fn images_to_pdf(image_paths: &[String], output_path: &str) -> Result<(), St
         let mut xobj_dict = Dictionary::new();
         xobj_dict.set("Im1", Object::Reference(img_id));
         let mut res_dict = Dictionary::new();
-        res_dict.set("XObject", Object::Dictionary(xobj_dict));
+        let xobj_id = doc.add_object(Object::Dictionary(xobj_dict));
+        res_dict.set("XObject", Object::Reference(xobj_id));
+        let res_id = doc.add_object(Object::Dictionary(res_dict));
 
         let content_stream = format!("q {pt_w:.2} 0 0 {pt_h:.2} 0 0 cm /Im1 Do Q");
-        let content_id = doc.add_object(Object::Stream(Stream::new(
-            Dictionary::new(),
-            content_stream.into_bytes(),
-        )));
+        let content_id =
+            doc.add_object(Stream::new(Dictionary::new(), content_stream.into_bytes()));
 
         // Create page
         let mut page_dict = Dictionary::new();
@@ -125,7 +125,7 @@ pub fn images_to_pdf(image_paths: &[String], output_path: &str) -> Result<(), St
                 Object::Real(pt_h),
             ]),
         );
-        page_dict.set("Resources", Object::Dictionary(res_dict));
+        page_dict.set("Resources", Object::Reference(res_id));
         page_dict.set("Contents", Object::Reference(content_id));
 
         let page_id = doc.add_object(Object::Dictionary(page_dict));
@@ -240,16 +240,18 @@ pub fn compress_pdf_quality(data: &[u8], quality: u8) -> Result<Vec<u8>, String>
                 stream.content.clone()
             };
 
-            let mut encoder = flate2::write::ZlibEncoder::new(
-                Vec::new(),
-                flate2::Compression::new(comp_level),
-            );
+            let mut encoder =
+                flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(comp_level));
             if std::io::Write::write_all(&mut encoder, &raw_data).is_ok() {
                 if let Ok(compressed) = encoder.finish() {
                     // Only replace if compression actually saved space or was uncompressed
-                    if compressed.len() < stream.content.len() || stream.dict.get(b"Filter").is_err() {
+                    if compressed.len() < stream.content.len()
+                        || stream.dict.get(b"Filter").is_err()
+                    {
                         stream.set_content(compressed);
-                        stream.dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+                        stream
+                            .dict
+                            .set("Filter", Object::Name(b"FlateDecode".to_vec()));
                     }
                 }
             }
@@ -309,46 +311,16 @@ pub fn add_page_numbers(
 
         // Register /DocForgeHelv font into page's Resources and attach content stream
         // Safely extract or inherit existing Resources (direct or indirect) without blowing them away
-        let mut resources_dict = if let Some(Object::Dictionary(page_dict)) = doc.objects.get(&page_id) {
-            match page_dict.get(b"Resources") {
-                Ok(Object::Dictionary(d)) => d.clone(),
-                Ok(Object::Reference(res_ref)) => {
-                    doc.objects.get(res_ref).and_then(|o| o.as_dict().ok()).cloned().unwrap_or_default()
-                }
-                _ => {
-                    // Check parent for inherited Resources
-                    let mut parent_id = page_dict.get(b"Parent").and_then(|p| p.as_reference()).ok();
-                    let mut inherited_res = Dictionary::new();
-                    while let Some(pid) = parent_id {
-                        if let Some(Object::Dictionary(parent_dict)) = doc.objects.get(&pid) {
-                            if let Ok(p_res) = parent_dict.get(b"Resources") {
-                                if let Ok(d) = p_res.as_dict() {
-                                    inherited_res = d.clone();
-                                    break;
-                                } else if let Ok(r_id) = p_res.as_reference() {
-                                    if let Some(Object::Dictionary(d)) = doc.objects.get(&r_id) {
-                                        inherited_res = d.clone();
-                                        break;
-                                    }
-                                }
-                            }
-                            parent_id = parent_dict.get(b"Parent").and_then(|p| p.as_reference()).ok();
-                        } else {
-                            break;
-                        }
-                    }
-                    inherited_res
-                }
-            }
-        } else {
-            Dictionary::new()
-        };
+        let mut resources_dict = resolve_page_resources(&doc, page_id);
 
         let mut fonts_dict = match resources_dict.get(b"Font") {
             Ok(Object::Dictionary(fd)) => fd.clone(),
-            Ok(Object::Reference(f_ref)) => {
-                doc.objects.get(f_ref).and_then(|o| o.as_dict().ok()).cloned().unwrap_or_default()
-            }
+            Ok(Object::Reference(f_ref)) => doc
+                .objects
+                .get(f_ref)
+                .and_then(|o| o.as_dict().ok())
+                .cloned()
+                .unwrap_or_default(),
             _ => Dictionary::new(),
         };
         fonts_dict.set("DocForgeHelv", Object::Reference(font_id));
@@ -356,21 +328,9 @@ pub fn add_page_numbers(
 
         if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
             page_dict.set("Resources", Object::Dictionary(resources_dict));
-
-            // Combine Contents safely as an Array [existing..., new_cid]
-            let updated_contents = match page_dict.get(b"Contents") {
-                Ok(Object::Reference(orig_id)) => {
-                    Object::Array(vec![Object::Reference(*orig_id), Object::Reference(new_cid)])
-                }
-                Ok(Object::Array(orig_arr)) => {
-                    let mut arr = orig_arr.clone();
-                    arr.push(Object::Reference(new_cid));
-                    Object::Array(arr)
-                }
-                _ => Object::Reference(new_cid),
-            };
-            page_dict.set("Contents", updated_contents);
         }
+
+        append_page_content(&mut doc, page_id, new_cid)?;
     }
 
     save_doc(&mut doc)

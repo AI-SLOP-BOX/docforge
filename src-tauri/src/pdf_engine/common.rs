@@ -2,6 +2,86 @@ use lopdf::{Dictionary, Document, Object, Stream};
 
 pub type OID = (u32, u16);
 
+/// Append a new content stream to a page without overwriting existing contents.
+/// Handles:
+/// - Page with no /Contents (sets as Reference)
+/// - Page with single Direct Stream (moves existing to indirect, creates Array [orig, new])
+/// - Page with single Indirect Reference (creates Array [orig, new])
+/// - Page with existing Array of streams/references (appends new reference preserving order)
+pub(crate) fn append_page_content(
+    doc: &mut Document,
+    page_id: OID,
+    new_content_id: OID,
+) -> Result<(), String> {
+    let page_obj = doc
+        .objects
+        .get_mut(&page_id)
+        .ok_or_else(|| "Page object not found".to_string())?;
+    let page_dict = page_obj
+        .as_dict_mut()
+        .map_err(|_| "Page is not a dictionary".to_string())?;
+
+    let existing_contents = page_dict.get(b"Contents").ok().cloned();
+
+    let updated_contents = match existing_contents {
+        None => Object::Reference(new_content_id),
+        Some(Object::Reference(orig_id)) => Object::Array(vec![
+            Object::Reference(orig_id),
+            Object::Reference(new_content_id),
+        ]),
+        Some(Object::Array(orig_arr)) => {
+            let mut arr = orig_arr;
+            arr.push(Object::Reference(new_content_id));
+            Object::Array(arr)
+        }
+        Some(Object::Stream(existing_stream)) => {
+            // Direct stream inside page dictionary: allocate as new object, then form array
+            let orig_id = doc.add_object(Object::Stream(existing_stream));
+            Object::Array(vec![
+                Object::Reference(orig_id),
+                Object::Reference(new_content_id),
+            ])
+        }
+        Some(other) => {
+            // Fallback for any other object representation
+            Object::Array(vec![other, Object::Reference(new_content_id)])
+        }
+    };
+
+    if let Some(page_obj) = doc.objects.get_mut(&page_id) {
+        if let Ok(dict) = page_obj.as_dict_mut() {
+            dict.set("Contents", updated_contents);
+        }
+    }
+
+    Ok(())
+}
+
+/// Recursively resolve and return a copy of the page's resources dictionary,
+/// walking up the /Parent tree if necessary to resolve inherited /Resources.
+pub(crate) fn resolve_page_resources(doc: &Document, page_id: OID) -> Dictionary {
+    let mut current_id = Some(page_id);
+    while let Some(cid) = current_id {
+        if let Some(Object::Dictionary(dict)) = doc.objects.get(&cid) {
+            if let Ok(res_obj) = dict.get(b"Resources") {
+                match res_obj {
+                    Object::Dictionary(d) => return d.clone(),
+                    Object::Reference(r_id) => {
+                        if let Some(Object::Dictionary(d)) = doc.objects.get(r_id) {
+                            return d.clone();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            current_id = dict.get(b"Parent").and_then(|p| p.as_reference()).ok();
+        } else {
+            break;
+        }
+    }
+    Dictionary::new()
+}
+
 pub(crate) fn save_doc(doc: &mut Document) -> Result<Vec<u8>, String> {
     let mut buf = Vec::new();
     doc.save_to(&mut buf)
@@ -253,7 +333,11 @@ pub fn delete_page(data: &[u8], page_index: usize) -> Result<Vec<u8>, String> {
     save_doc(&mut doc)
 }
 
-pub fn rotate_page_in_doc(doc: &mut Document, page_index: usize, degrees: i32) -> Result<(), String> {
+pub fn rotate_page_in_doc(
+    doc: &mut Document,
+    page_index: usize,
+    degrees: i32,
+) -> Result<(), String> {
     let page_ids = get_page_ids(doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
@@ -361,26 +445,68 @@ pub fn add_text(
     }
 
     let (r, g, b) = parse_hex_color(color, (0.0, 0.0, 0.0));
+    let page_id = page_ids[page_index];
 
+    let is_ascii = text.is_ascii();
+    let (font_res_name, font_id, tj_string_obj) = if is_ascii {
+        // Standard Type1 Helvetica for ASCII
+        let mut font_dict = Dictionary::new();
+        font_dict.set("Type", Object::Name("Font".into()));
+        font_dict.set("Subtype", Object::Name("Type1".into()));
+        font_dict.set("BaseFont", Object::Name("Helvetica".into()));
+        let fid = doc.add_object(Object::Dictionary(font_dict));
+        (
+            "DocForgeTextHelv",
+            fid,
+            Object::String(text.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+        )
+    } else {
+        // Universal Type0 Unicode font pipeline with Identity-H and ToUnicode CMap
+        let fid = super::font_unicode::ensure_unicode_font(&mut doc, "DocForgeUnicodeFont");
+        let utf16be_bytes = super::font_unicode::encode_unicode_text_to_utf16be_bytes(text);
+        (
+            "DocForgeUniFont",
+            fid,
+            Object::String(utf16be_bytes, lopdf::StringFormat::Hexadecimal),
+        )
+    };
+
+    let mut resources_dict = resolve_page_resources(&doc, page_id);
+    let mut fonts_dict = match resources_dict.get(b"Font") {
+        Ok(Object::Dictionary(fd)) => fd.clone(),
+        Ok(Object::Reference(f_ref)) => doc
+            .objects
+            .get(f_ref)
+            .and_then(|o| o.as_dict().ok())
+            .cloned()
+            .unwrap_or_default(),
+        _ => Dictionary::new(),
+    };
+    fonts_dict.set(font_res_name, Object::Reference(font_id));
+    resources_dict.set("Font", Object::Dictionary(fonts_dict));
+    if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
+        page_dict.set("Resources", Object::Dictionary(resources_dict));
+    }
+
+    // Wrap operations with q / Q to protect graphics state
     let operations = vec![
+        lopdf::content::Operation::new("q", vec![]),
         lopdf::content::Operation::new("BT", vec![]),
         lopdf::content::Operation::new(
             "Tf",
-            vec![Object::Name("Helvetica".into()), Object::Real(size as f32)],
+            vec![
+                Object::Name(font_res_name.into()),
+                Object::Real(size as f32),
+            ],
         ),
         lopdf::content::Operation::new(
             "rg",
             vec![Object::Real(r), Object::Real(g), Object::Real(b)],
         ),
         lopdf::content::Operation::new("Td", vec![Object::Real(x as f32), Object::Real(y as f32)]),
-        lopdf::content::Operation::new(
-            "Tj",
-            vec![Object::String(
-                text.as_bytes().to_vec(),
-                lopdf::StringFormat::Literal,
-            )],
-        ),
+        lopdf::content::Operation::new("Tj", vec![tj_string_obj]),
         lopdf::content::Operation::new("ET", vec![]),
+        lopdf::content::Operation::new("Q", vec![]),
     ];
 
     let content = lopdf::content::Content { operations };
@@ -388,40 +514,20 @@ pub fn add_text(
         .encode()
         .map_err(|e| format!("Failed to encode content: {e}"))?;
 
-    let page_id = page_ids[page_index];
     let mut stream = Stream::new(Dictionary::new(), content_bytes);
     stream.dict.set("Type", Object::Name("Content".into()));
     let content_id = doc.add_object(stream);
 
-    if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
-        dict.set("Contents", Object::Reference(content_id));
-    }
+    append_page_content(&mut doc, page_id, content_id)?;
 
     save_doc(&mut doc)
 }
 
-pub fn protect_pdf(data: &[u8], password: &str) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
-
-    let mut crypt_dict = Dictionary::new();
-    crypt_dict.set("Filter", Object::Name("Standard".into()));
-    crypt_dict.set("V", Object::Integer(2));
-    crypt_dict.set("R", Object::Integer(3));
-    crypt_dict.set("Length", Object::Integer(128));
-    crypt_dict.set(
-        "O",
-        Object::String(password.as_bytes().to_vec(), lopdf::StringFormat::Literal),
-    );
-    crypt_dict.set(
-        "U",
-        Object::String(password.as_bytes().to_vec(), lopdf::StringFormat::Literal),
-    );
-    crypt_dict.set("P", Object::Integer(-4));
-
-    let crypt_id = doc.add_object(Object::Dictionary(crypt_dict));
-    doc.trailer.set("Encrypt", Object::Reference(crypt_id));
-
-    save_doc(&mut doc)
+pub fn protect_pdf(_data: &[u8], _password: &str) -> Result<Vec<u8>, String> {
+    // Honest: Refuse to generate corrupted pseudo-encrypted PDF.
+    // Full Standard Security Handler with AES-128/256 and key derivation schedule
+    // is required to safely encrypt streams and strings without corrupting the document.
+    Err("PDF暗号化（AES-128/256 Standard Security Handler）によるストリーム暗号化は現在実装準備中です。破損した暗号化PDFの出力を防止するため処理を安全に中断しました。".into())
 }
 
 pub fn create_blank_pdf(width: f64, height: f64, page_count: usize) -> Result<Vec<u8>, String> {
@@ -450,8 +556,8 @@ pub fn create_blank_pdf(width: f64, height: f64, page_count: usize) -> Result<Ve
         kids.push(Object::Reference(page_id));
     }
 
-    if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&pages_id) {
-        dict.set("Kids", Object::Array(kids));
+    if let Some(Object::Dictionary(ref mut pages)) = doc.objects.get_mut(&pages_id) {
+        pages.set("Kids", Object::Array(kids));
     }
 
     let mut catalog = Dictionary::new();
@@ -503,6 +609,29 @@ pub fn add_image_to_page(
     let img_id = doc.add_object(stream);
 
     let page_id = page_ids[page_index];
+
+    // Unique XObject resource name based on img_id
+    let img_res_name = format!("DocForgeImg_{}_{}", img_id.0, img_id.1);
+
+    // Update page resources safely
+    let mut resources = resolve_page_resources(&doc, page_id);
+    let mut xobjects = match resources.get(b"XObject") {
+        Ok(Object::Dictionary(x)) => x.clone(),
+        Ok(Object::Reference(x_ref)) => doc
+            .objects
+            .get(x_ref)
+            .and_then(|o| o.as_dict().ok())
+            .cloned()
+            .unwrap_or_default(),
+        _ => Dictionary::new(),
+    };
+    xobjects.set(img_res_name.clone(), Object::Reference(img_id));
+    resources.set("XObject", Object::Dictionary(xobjects));
+
+    if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
+        page_dict.set("Resources", Object::Dictionary(resources));
+    }
+
     let operations = vec![
         lopdf::content::Operation::new("q", vec![]),
         lopdf::content::Operation::new(
@@ -516,7 +645,7 @@ pub fn add_image_to_page(
                 Object::Real(y as f32),
             ],
         ),
-        lopdf::content::Operation::new("Do", vec![Object::Name("Img".into())]),
+        lopdf::content::Operation::new("Do", vec![Object::Name(img_res_name.into())]),
         lopdf::content::Operation::new("Q", vec![]),
     ];
 
@@ -531,21 +660,7 @@ pub fn add_image_to_page(
         .set("Type", Object::Name("Content".into()));
     let content_id = doc.add_object(content_stream);
 
-    if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
-        page_dict.set("Contents", Object::Reference(content_id));
-
-        let mut resources = match page_dict.get(b"Resources") {
-            Ok(Object::Dictionary(r)) => r.clone(),
-            _ => Dictionary::new(),
-        };
-        let mut xobjects = match resources.get(b"XObject") {
-            Ok(Object::Dictionary(x)) => x.clone(),
-            _ => Dictionary::new(),
-        };
-        xobjects.set("Img", Object::Reference(img_id));
-        resources.set("XObject", Object::Dictionary(xobjects));
-        page_dict.set("Resources", Object::Dictionary(resources));
-    }
+    append_page_content(&mut doc, page_id, content_id)?;
 
     save_doc(&mut doc)
 }

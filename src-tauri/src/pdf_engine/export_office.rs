@@ -192,6 +192,8 @@ pub fn create_pdf_portfolio(file_paths: &[String], output_path: &str) -> Result<
 
     let collection_id = doc.add_object(Object::Dictionary(collection_dict));
 
+    // EmbeddedFiles Names tree leaf node:
+    // /Names [ (filename1) ref1 (filename2) ref2 ... ]
     let mut names_array = Vec::new();
     for (i, path) in file_paths.iter().enumerate() {
         let filename = std::path::Path::new(path)
@@ -207,16 +209,68 @@ pub fn create_pdf_portfolio(file_paths: &[String], output_path: &str) -> Result<
         }
     }
 
-    let mut names_dict = Dictionary::new();
-    names_dict.set("EmbeddedFiles", Object::Array(names_array));
+    let mut ef_tree_node = Dictionary::new();
+    ef_tree_node.set("Names", Object::Array(names_array));
+    let ef_tree_id = doc.add_object(Object::Dictionary(ef_tree_node));
 
+    // Catalog Names dictionary:
+    // << /EmbeddedFiles ef_tree_id >>
+    let mut names_dict = Dictionary::new();
+    names_dict.set("EmbeddedFiles", Object::Reference(ef_tree_id));
     let names_id = doc.add_object(Object::Dictionary(names_dict));
 
-    doc.trailer.set("Root", Object::Reference(names_id));
+    // Standard cover page so the PDF has valid /Pages structure
+    let pages_id = doc.new_object_id();
 
-    let mut root_dict = Dictionary::new();
-    root_dict.set("Collection", Object::Reference(collection_id));
-    doc.objects.insert(names_id, Object::Dictionary(root_dict));
+    let mut page_dict = Dictionary::new();
+    page_dict.set("Type", Object::Name("Page".into()));
+    page_dict.set("Parent", Object::Reference(pages_id));
+    page_dict.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Real(0.0),
+            Object::Real(0.0),
+            Object::Real(595.0),
+            Object::Real(842.0),
+        ]),
+    );
+
+    let cover_text = "q 1 0 0 1 50 750 cm BT /F1 16 Tf (DocForge PDF Portfolio) Tj ET Q";
+    let cover_content_id = doc.add_object(Stream::new(
+        Dictionary::new(),
+        cover_text.as_bytes().to_vec(),
+    ));
+    page_dict.set("Contents", Object::Reference(cover_content_id));
+
+    let mut font_dict = Dictionary::new();
+    font_dict.set("Type", Object::Name("Font".into()));
+    font_dict.set("Subtype", Object::Name("Type1".into()));
+    font_dict.set("BaseFont", Object::Name("Helvetica".into()));
+    let font_id = doc.add_object(Object::Dictionary(font_dict));
+
+    let mut fonts_res = Dictionary::new();
+    fonts_res.set("F1", Object::Reference(font_id));
+    let mut res_dict = Dictionary::new();
+    res_dict.set("Font", Object::Dictionary(fonts_res));
+    page_dict.set("Resources", Object::Dictionary(res_dict));
+
+    let page_id = doc.add_object(Object::Dictionary(page_dict));
+
+    let mut pages_dict = Dictionary::new();
+    pages_dict.set("Type", Object::Name("Pages".into()));
+    pages_dict.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+    pages_dict.set("Count", Object::Integer(1));
+    doc.objects.insert(pages_id, Object::Dictionary(pages_dict));
+
+    // Valid Document Catalog
+    let mut catalog_dict = Dictionary::new();
+    catalog_dict.set("Type", Object::Name("Catalog".into()));
+    catalog_dict.set("Pages", Object::Reference(pages_id));
+    catalog_dict.set("Names", Object::Reference(names_id));
+    catalog_dict.set("Collection", Object::Reference(collection_id));
+
+    let catalog_id = doc.add_object(Object::Dictionary(catalog_dict));
+    doc.trailer.set("Root", Object::Reference(catalog_id));
 
     let mut buf = Vec::new();
     doc.save_to(&mut buf).map_err(|e| e.to_string())?;

@@ -164,9 +164,7 @@ pub fn add_header_footer(
         stream.dict.set("Type", Object::Name("Content".into()));
         let content_id = doc.add_object(stream);
 
-        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
-            dict.set("Contents", Object::Reference(content_id));
-        }
+        append_page_content(&mut doc, page_id, content_id)?;
     }
 
     save_doc(&mut doc)
@@ -183,18 +181,98 @@ pub fn add_bookmark(data: &[u8], title: &str, page_index: usize) -> Result<Vec<u
 
     let page_id = page_ids[page_index];
 
-    let mut bookmark_dict = Dictionary::new();
-    bookmark_dict.set(
+    // Ensure Catalog exists
+    let root_id = if let Ok(id) = doc.trailer.get(b"Root").and_then(|o| o.as_reference()) {
+        id
+    } else {
+        let root_dict = Dictionary::new();
+        let id = doc.add_object(Object::Dictionary(root_dict));
+        doc.trailer.set("Root", Object::Reference(id));
+        id
+    };
+
+    // Check if Catalog already has Outlines
+    let outline_id = if let Some(Object::Dictionary(ref root_dict)) = doc.objects.get(&root_id) {
+        root_dict
+            .get(b"Outlines")
+            .ok()
+            .and_then(|o| o.as_reference().ok())
+    } else {
+        None
+    };
+
+    let outline_id = match outline_id {
+        Some(oid) => oid,
+        None => {
+            let mut outlines = Dictionary::new();
+            outlines.set("Type", Object::Name("Outlines".into()));
+            outlines.set("Count", Object::Integer(0));
+            let oid = doc.add_object(Object::Dictionary(outlines));
+            if let Some(Object::Dictionary(ref mut root_dict)) = doc.objects.get_mut(&root_id) {
+                root_dict.set("Outlines", Object::Reference(oid));
+            }
+            oid
+        }
+    };
+
+    // Create bookmark item dictionary
+    let mut item_dict = Dictionary::new();
+    item_dict.set(
         "Title",
         Object::String(title.as_bytes().to_vec(), lopdf::StringFormat::Literal),
     );
-    bookmark_dict.set("Parent", Object::Reference(page_id));
-    bookmark_dict.set(
+    item_dict.set("Parent", Object::Reference(outline_id));
+    item_dict.set(
         "Dest",
-        Object::Array(vec![Object::Reference(page_id), Object::Name("Fit".into())]),
+        Object::Array(vec![
+            Object::Reference(page_id),
+            Object::Name("FitH".into()),
+            Object::Real(0.0),
+        ]),
     );
 
-    let _bookmark_id = doc.add_object(Object::Dictionary(bookmark_dict));
+    // Read existing Outlines dictionary to find First, Last, and Count
+    let (first_ref, last_ref, current_count) =
+        if let Some(Object::Dictionary(ref out_dict)) = doc.objects.get(&outline_id) {
+            let first = out_dict
+                .get(b"First")
+                .ok()
+                .and_then(|o| o.as_reference().ok());
+            let last = out_dict
+                .get(b"Last")
+                .ok()
+                .and_then(|o| o.as_reference().ok());
+            let count = out_dict
+                .get(b"Count")
+                .ok()
+                .and_then(|o| o.as_i64().ok())
+                .unwrap_or(0);
+            (first, last, count)
+        } else {
+            (None, None, 0)
+        };
+
+    // If there is an existing last item, link its Next to this new item, and new item's Prev to last
+    if let Some(prev_last_id) = last_ref {
+        item_dict.set("Prev", Object::Reference(prev_last_id));
+    }
+
+    let new_item_id = doc.add_object(Object::Dictionary(item_dict));
+
+    if let Some(prev_last_id) = last_ref {
+        if let Some(Object::Dictionary(ref mut prev_dict)) = doc.objects.get_mut(&prev_last_id) {
+            prev_dict.set("Next", Object::Reference(new_item_id));
+        }
+    }
+
+    // Update Outlines dictionary First, Last, and Count
+    if let Some(Object::Dictionary(ref mut out_dict)) = doc.objects.get_mut(&outline_id) {
+        if first_ref.is_none() {
+            out_dict.set("First", Object::Reference(new_item_id));
+        }
+        out_dict.set("Last", Object::Reference(new_item_id));
+        out_dict.set("Count", Object::Integer(current_count + 1));
+    }
 
     save_doc(&mut doc)
 }
@@ -249,9 +327,7 @@ pub fn add_bates_number(
         stream.dict.set("Type", Object::Name("Content".into()));
         let content_id = doc.add_object(stream);
 
-        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
-            dict.set("Contents", Object::Reference(content_id));
-        }
+        append_page_content(&mut doc, page_id, content_id)?;
     }
 
     save_doc(&mut doc)

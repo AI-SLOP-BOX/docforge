@@ -381,10 +381,9 @@ pub fn import_xfdf(data: &[u8], xfdf_content: &str) -> Result<Vec<u8>, String> {
             current_contents = xml_unescape(raw_c);
         }
 
-        let is_end_tag = (!current_type.is_empty()) && (
-            trimmed == format!("</{}>", current_type)
-            || trimmed == format!("</{}>", current_type.to_lowercase())
-        );
+        let is_end_tag = (!current_type.is_empty())
+            && (trimmed == format!("</{}>", current_type)
+                || trimmed == format!("</{}>", current_type.to_lowercase()));
 
         if is_end_tag {
             if !current_type.is_empty() && current_page < page_ids.len() {

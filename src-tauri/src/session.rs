@@ -96,7 +96,8 @@ impl DocumentSession {
     // Notice: This is a memory budget (soft threshold), not a hard cap.
     // We always preserve at least 1 undo entry so that even large files (>512MB) retain immediate undo capability.
     fn evict_oldest_history(&mut self) {
-        while self.total_history_bytes > TARGET_HISTORY_MEMORY_PER_DOC && self.undo_stack.len() > 1 {
+        while self.total_history_bytes > TARGET_HISTORY_MEMORY_PER_DOC && self.undo_stack.len() > 1
+        {
             let evicted = self.undo_stack.remove(0);
             self.total_history_bytes = self.total_history_bytes.saturating_sub(evicted.byte_size());
         }
@@ -143,7 +144,10 @@ impl DocumentSession {
                     to_degrees,
                 }
             }
-            EditCommand::FullSnapshot { description, ref data } => {
+            EditCommand::FullSnapshot {
+                description,
+                ref data,
+            } => {
                 let mut current = Vec::new();
                 self.doc
                     .save_to(&mut current)
@@ -190,7 +194,10 @@ impl DocumentSession {
                     to_degrees,
                 }
             }
-            EditCommand::FullSnapshot { description, ref data } => {
+            EditCommand::FullSnapshot {
+                description,
+                ref data,
+            } => {
                 let mut current = Vec::new();
                 self.doc
                     .save_to(&mut current)
@@ -271,15 +278,27 @@ mod tests {
         let mut page_dict = lopdf::Dictionary::new();
         page_dict.set("Type", lopdf::Object::Name("Page".into()));
         page_dict.set("Parent", lopdf::Object::Reference(pages_id));
-        page_dict.set("MediaBox", lopdf::Object::Array(vec![lopdf::Object::Real(0.0), lopdf::Object::Real(0.0), lopdf::Object::Real(100.0), lopdf::Object::Real(100.0)]));
+        page_dict.set(
+            "MediaBox",
+            lopdf::Object::Array(vec![
+                lopdf::Object::Real(0.0),
+                lopdf::Object::Real(0.0),
+                lopdf::Object::Real(100.0),
+                lopdf::Object::Real(100.0),
+            ]),
+        );
         page_dict.set("Contents", lopdf::Object::Reference(content_id));
         let page_id = doc.add_object(lopdf::Object::Dictionary(page_dict));
 
         let mut pages_dict = lopdf::Dictionary::new();
         pages_dict.set("Type", lopdf::Object::Name("Pages".into()));
         pages_dict.set("Count", lopdf::Object::Integer(1));
-        pages_dict.set("Kids", lopdf::Object::Array(vec![lopdf::Object::Reference(page_id)]));
-        doc.objects.insert(pages_id, lopdf::Object::Dictionary(pages_dict));
+        pages_dict.set(
+            "Kids",
+            lopdf::Object::Array(vec![lopdf::Object::Reference(page_id)]),
+        );
+        doc.objects
+            .insert(pages_id, lopdf::Object::Dictionary(pages_dict));
 
         let mut catalog = lopdf::Dictionary::new();
         catalog.set("Type", lopdf::Object::Name("Catalog".into()));
@@ -321,13 +340,27 @@ mod tests {
         assert_eq!(session.redo_stack.len(), 1);
 
         // Check page rotation reverted to 0
-        let rot = session.doc.objects.get(&page_ids[0]).and_then(|o| o.as_dict().ok()).and_then(|d| d.get(b"Rotate").ok()).and_then(|r| r.as_i64().ok()).unwrap_or(0);
+        let rot = session
+            .doc
+            .objects
+            .get(&page_ids[0])
+            .and_then(|o| o.as_dict().ok())
+            .and_then(|d| d.get(b"Rotate").ok())
+            .and_then(|r| r.as_i64().ok())
+            .unwrap_or(0);
         assert_eq!(rot, 0);
 
         // 4. Redo rotation
         let redone = session.redo().expect("Redo");
         assert!(redone);
-        let rot2 = session.doc.objects.get(&page_ids[0]).and_then(|o| o.as_dict().ok()).and_then(|d| d.get(b"Rotate").ok()).and_then(|r| r.as_i64().ok()).unwrap_or(0);
+        let rot2 = session
+            .doc
+            .objects
+            .get(&page_ids[0])
+            .and_then(|o| o.as_dict().ok())
+            .and_then(|d| d.get(b"Rotate").ok())
+            .and_then(|r| r.as_i64().ok())
+            .unwrap_or(0);
         assert_eq!(rot2, 90);
     }
 
@@ -354,7 +387,14 @@ mod tests {
         assert_eq!(session.undo_stack.len(), 3);
 
         // Check rotation is 270
-        let rot = session.doc.objects.get(&page_ids[0]).and_then(|o| o.as_dict().ok()).and_then(|d| d.get(b"Rotate").ok()).and_then(|r| r.as_i64().ok()).unwrap_or(0);
+        let rot = session
+            .doc
+            .objects
+            .get(&page_ids[0])
+            .and_then(|o| o.as_dict().ok())
+            .and_then(|d| d.get(b"Rotate").ok())
+            .and_then(|r| r.as_i64().ok())
+            .unwrap_or(0);
         assert_eq!(rot, 270);
 
         // Undo 3 times: 270 -> 180 -> 90 -> 0
@@ -363,7 +403,14 @@ mod tests {
         assert!(session.undo().unwrap());
         assert_eq!(session.redo_stack.len(), 3);
 
-        let rot0 = session.doc.objects.get(&page_ids[0]).and_then(|o| o.as_dict().ok()).and_then(|d| d.get(b"Rotate").ok()).and_then(|r| r.as_i64().ok()).unwrap_or(0);
+        let rot0 = session
+            .doc
+            .objects
+            .get(&page_ids[0])
+            .and_then(|o| o.as_dict().ok())
+            .and_then(|d| d.get(b"Rotate").ok())
+            .and_then(|r| r.as_i64().ok())
+            .unwrap_or(0);
         assert_eq!(rot0, 0);
 
         // Multi-step Redo 3 times: 0 -> 90 -> 180 -> 270
@@ -377,7 +424,14 @@ mod tests {
         assert!(session.redo().unwrap());
         assert_eq!(session.redo_stack.len(), 0);
 
-        let rot_final = session.doc.objects.get(&page_ids[0]).and_then(|o| o.as_dict().ok()).and_then(|d| d.get(b"Rotate").ok()).and_then(|r| r.as_i64().ok()).unwrap_or(0);
+        let rot_final = session
+            .doc
+            .objects
+            .get(&page_ids[0])
+            .and_then(|o| o.as_dict().ok())
+            .and_then(|d| d.get(b"Rotate").ok())
+            .and_then(|r| r.as_i64().ok())
+            .unwrap_or(0);
         assert_eq!(rot_final, 270);
     }
 
@@ -466,7 +520,16 @@ mod tests {
         let reloaded = session.save_to_bytes().unwrap();
         let reloaded_doc = lopdf::Document::load_mem(&reloaded).unwrap();
         let p_ids = reloaded_doc.page_iter().collect::<Vec<_>>();
-        let rot = reloaded_doc.objects.get(&p_ids[0]).unwrap().as_dict().unwrap().get(b"Rotate").unwrap().as_i64().unwrap();
+        let rot = reloaded_doc
+            .objects
+            .get(&p_ids[0])
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"Rotate")
+            .unwrap()
+            .as_i64()
+            .unwrap();
         assert_eq!(rot, 180);
     }
 
@@ -480,7 +543,8 @@ mod tests {
         // Helper to extract rotation of page 0
         let get_rotation = |doc: &lopdf::Document| -> i32 {
             let p_ids = doc.page_iter().collect::<Vec<_>>();
-            doc.objects.get(&p_ids[0])
+            doc.objects
+                .get(&p_ids[0])
                 .and_then(|o| o.as_dict().ok())
                 .and_then(|d| d.get(b"Rotate").ok())
                 .and_then(|r| r.as_i64().ok())
@@ -534,12 +598,9 @@ mod tests {
             let current_bytes = s.save_to_bytes().unwrap();
 
             // Run the actual engine function `edit_text_block`
-            let updated_bytes = crate::pdf_engine::edit_text_block(
-                &current_bytes,
-                0,
-                0,
-                "Hello Antigravity",
-            ).expect("edit_text_block should succeed");
+            let updated_bytes =
+                crate::pdf_engine::edit_text_block(&current_bytes, 0, 0, "Hello Antigravity")
+                    .expect("edit_text_block should succeed");
 
             s.push_undo(EditCommand::FullSnapshot {
                 description: "Edit text block #0".into(),
@@ -605,11 +666,19 @@ mod tests {
         {
             let mut s = session_arc.write().unwrap();
             let saved_bytes = s.save_to_bytes().expect("Serialization must succeed");
-            let reloaded_doc = lopdf::Document::load_mem(&saved_bytes).expect("Reloading must succeed");
+            let reloaded_doc =
+                lopdf::Document::load_mem(&saved_bytes).expect("Reloading must succeed");
 
-            assert_eq!(get_rotation(&reloaded_doc), 90, "Serialized document must preserve 90 deg rotation");
-            assert_eq!(get_text(&reloaded_doc), "Hello Antigravity", "Serialized document must preserve edited text");
+            assert_eq!(
+                get_rotation(&reloaded_doc),
+                90,
+                "Serialized document must preserve 90 deg rotation"
+            );
+            assert_eq!(
+                get_text(&reloaded_doc),
+                "Hello Antigravity",
+                "Serialized document must preserve edited text"
+            );
         }
     }
 }
-

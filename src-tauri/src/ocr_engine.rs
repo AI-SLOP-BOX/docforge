@@ -1,12 +1,22 @@
 use std::path::Path;
 use std::process::Command;
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct OCRSuspect {
     pub text: String,
     pub confidence: f64,
     pub line_num: usize,
     pub word_num: usize,
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct OCRWordBox {
+    pub text: String,
+    pub left: f32,
+    pub top: f32,
+    pub width: f32,
+    pub height: f32,
+    pub confidence: f64,
 }
 
 #[derive(serde::Serialize)]
@@ -37,7 +47,7 @@ pub fn ocr_files(paths: &[String], language: &str) -> Result<OCRResult, String> 
         if path.extension().map(|e| e.to_string_lossy().to_lowercase()) == Some("pdf".into()) {
             let (_guard, images) = pdf_to_images(path)?;
             for img_path in &images {
-                let (text, conf, suspects) = run_tesseract(img_path, tess_lang)?;
+                let (text, conf, suspects, _words) = run_tesseract(img_path, tess_lang)?;
                 full_text.push_str(&text);
                 total_confidence += conf;
                 page_count += 1;
@@ -45,7 +55,8 @@ pub fn ocr_files(paths: &[String], language: &str) -> Result<OCRResult, String> 
             }
             // _guard drops here or on early error return (`?`), automatically removing the entire temp directory
         } else {
-            let (text, conf, suspects) = run_tesseract(path.to_str().unwrap_or(""), tess_lang)?;
+            let (text, conf, suspects, _words) =
+                run_tesseract(path.to_str().unwrap_or(""), tess_lang)?;
             full_text.push_str(&text);
             total_confidence += conf;
             page_count += 1;
@@ -67,10 +78,87 @@ pub fn ocr_files(paths: &[String], language: &str) -> Result<OCRResult, String> 
     })
 }
 
-fn run_tesseract(
+pub fn parse_tsv_words(tsv_content: &str) -> (String, f64, Vec<OCRSuspect>, Vec<OCRWordBox>) {
+    let mut total_conf = 0.0;
+    let mut count = 0;
+    let mut suspects = Vec::new();
+    let mut words = Vec::new();
+    let mut reconstructed_text = String::new();
+    let mut current_line_key = (-1, -1); // (par_num, line_num)
+
+    for line in tsv_content.lines().skip(1) {
+        // skip header
+        let cols: Vec<&str> = line.split('\t').collect();
+        // TSV format: level, page_num, block_num, par_num, line_num, word_num, left, top, width, height, conf, text
+        if cols.len() >= 12 {
+            let level = cols[0].parse::<i32>().unwrap_or(0);
+            let par_num = cols[3].parse::<i32>().unwrap_or(0);
+            let line_num = cols[4].parse::<i32>().unwrap_or(0);
+            let word_num = cols[5].parse::<usize>().unwrap_or(0);
+            let left = cols[6].parse::<f32>().unwrap_or(0.0);
+            let top = cols[7].parse::<f32>().unwrap_or(0.0);
+            let width = cols[8].parse::<f32>().unwrap_or(0.0);
+            let height = cols[9].parse::<f32>().unwrap_or(0.0);
+            let conf = cols[10].parse::<f64>().unwrap_or(-1.0);
+            let word_text = cols[11].trim();
+
+            if !word_text.is_empty() {
+                if current_line_key != (par_num, line_num) {
+                    if !reconstructed_text.is_empty() {
+                        reconstructed_text.push('\n');
+                    }
+                    current_line_key = (par_num, line_num);
+                } else {
+                    reconstructed_text.push(' ');
+                }
+                reconstructed_text.push_str(word_text);
+
+                // level 5 corresponds to word tokens in Tesseract TSV output
+                if level == 5 || (left > 0.0 || width > 0.0) {
+                    words.push(OCRWordBox {
+                        text: word_text.to_string(),
+                        left,
+                        top,
+                        width,
+                        height,
+                        confidence: if conf >= 0.0 { conf } else { 0.0 },
+                    });
+                }
+            }
+
+            if conf > 0.0 {
+                total_conf += conf;
+                count += 1;
+
+                if conf < 75.0 && !word_text.is_empty() {
+                    suspects.push(OCRSuspect {
+                        text: word_text.to_string(),
+                        confidence: conf,
+                        line_num: line_num.max(0) as usize,
+                        word_num,
+                    });
+                }
+            }
+        }
+    }
+
+    if !reconstructed_text.is_empty() {
+        reconstructed_text.push('\n');
+    }
+
+    let avg_conf = if count > 0 {
+        total_conf / count as f64
+    } else {
+        85.0
+    };
+
+    (reconstructed_text, avg_conf, suspects, words)
+}
+
+pub fn run_tesseract(
     image_path: &str,
     language: &str,
-) -> Result<(String, f64, Vec<OCRSuspect>), String> {
+) -> Result<(String, f64, Vec<OCRSuspect>, Vec<OCRWordBox>), String> {
     // Single tesseract invocation in TSV mode to get text, geometry, and confidence in one pass
     let output = Command::new("tesseract")
         .args([
@@ -96,63 +184,7 @@ fn run_tesseract(
     }
 
     let tsv_content = String::from_utf8_lossy(&output.stdout);
-    let mut total_conf = 0.0;
-    let mut count = 0;
-    let mut suspects = Vec::new();
-    let mut reconstructed_text = String::new();
-    let mut current_line_key = (-1, -1); // (par_num, line_num)
-
-    for line in tsv_content.lines().skip(1) {
-        // skip header
-        let cols: Vec<&str> = line.split('\t').collect();
-        // TSV format: level, page_num, block_num, par_num, line_num, word_num, left, top, width, height, conf, text
-        if cols.len() >= 12 {
-            let par_num = cols[3].parse::<i32>().unwrap_or(0);
-            let line_num = cols[4].parse::<i32>().unwrap_or(0);
-            let word_text = cols[11].trim();
-
-            if !word_text.is_empty() {
-                if current_line_key != (par_num, line_num) {
-                    if !reconstructed_text.is_empty() {
-                        reconstructed_text.push('\n');
-                    }
-                    current_line_key = (par_num, line_num);
-                } else {
-                    reconstructed_text.push(' ');
-                }
-                reconstructed_text.push_str(word_text);
-            }
-
-            if let Ok(conf) = cols[10].parse::<f64>() {
-                if conf > 0.0 {
-                    total_conf += conf;
-                    count += 1;
-
-                    if conf < 75.0 && !word_text.is_empty() {
-                        let word_num = cols[5].parse::<usize>().unwrap_or(0);
-                        suspects.push(OCRSuspect {
-                            text: word_text.to_string(),
-                            confidence: conf,
-                            line_num: line_num.max(0) as usize,
-                            word_num,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    if !reconstructed_text.is_empty() {
-        reconstructed_text.push('\n');
-    }
-
-    let avg_conf = if count > 0 {
-        total_conf / count as f64
-    } else {
-        85.0
-    };
-
-    Ok((reconstructed_text, avg_conf, suspects))
+    Ok(parse_tsv_words(&tsv_content))
 }
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -193,9 +225,7 @@ fn pdf_to_images(pdf_path: &Path) -> Result<(AutoCleanupDir, Vec<String>), Strin
             &prefix,
         ])
         .output()
-        .map_err(|e| {
-            format!("Failed to run pdftoppm (install: brew install poppler): {e}")
-        })?;
+        .map_err(|e| format!("Failed to run pdftoppm (install: brew install poppler): {e}"))?;
 
     if !cmd.status.success() {
         return Err(String::from_utf8_lossy(&cmd.stderr).to_string());
@@ -286,12 +316,16 @@ pub fn create_searchable_pdf(
     let mut doc = Document::with_version("1.7");
     let pages_id = doc.add_object(Object::Dictionary(Dictionary::new()));
 
-    // Shared standard font resource for OCR text layer
+    // Standard Helvetica font for ASCII
     let mut font_dict = Dictionary::new();
     font_dict.set("Type", Object::Name("Font".into()));
     font_dict.set("Subtype", Object::Name("Type1".into()));
     font_dict.set("BaseFont", Object::Name("Helvetica".into()));
     let font_id = doc.add_object(Object::Dictionary(font_dict));
+
+    // Type0 Unicode font for Japanese / CJK OCR text
+    let uni_font_id =
+        crate::pdf_engine::font_unicode::ensure_unicode_font(&mut doc, "DocForgeOCRUniFont");
 
     let mut page_refs = Vec::new();
     let lines: Vec<&str> = ocr_text.lines().collect();
@@ -338,41 +372,102 @@ pub fn create_searchable_pdf(
             ));
             operations.push(Operation::new("Do", vec![Object::Name("Im1".into())]));
             operations.push(Operation::new("Q", vec![]));
-
-            // Overlay invisible selectable text (rendering mode 3 Tr)
-            operations.push(Operation::new("BT", vec![]));
-            operations.push(Operation::new(
-                "Tf",
-                vec![Object::Name("F1".into()), Object::Real(10.0)],
-            ));
-            operations.push(Operation::new("Tr", vec![Object::Integer(3)]));
-
-            let start_line = page_idx * lines_per_page;
-            let end_line = if page_idx == original_paths.len() - 1 {
-                lines.len()
-            } else {
-                (start_line + lines_per_page).min(lines.len())
+            // Try word-level OCR extraction if original image is on disk, otherwise fall back to lines
+            let words = match run_tesseract(path, "jpn+eng") {
+                Ok((_, _, _, w)) if !w.is_empty() => w,
+                _ => Vec::new(),
             };
 
-            let mut y = pt_h - 20.0;
-            for line_idx in start_line..end_line {
-                if y < 20.0 {
-                    break;
+            // Overlay invisible selectable text (rendering mode 3 Tr)
+            let scale_x = pt_w / (width as f32).max(1.0);
+            let scale_y = pt_h / (height as f32).max(1.0);
+
+            if !words.is_empty() {
+                for word in &words {
+                    if word.text.is_empty() {
+                        continue;
+                    }
+                    let pdf_x = word.left * scale_x;
+                    let pdf_h = (word.height * scale_y).max(4.0);
+                    let pdf_y = pt_h - (word.top + word.height) * scale_y;
+
+                    let (font_res, tj_arg) = if word.text.is_ascii() {
+                        (
+                            "F1",
+                            Object::String(
+                                word.text.as_bytes().to_vec(),
+                                lopdf::StringFormat::Literal,
+                            ),
+                        )
+                    } else {
+                        let utf16 =
+                            crate::pdf_engine::font_unicode::encode_unicode_text_to_utf16be_bytes(
+                                &word.text,
+                            );
+                        (
+                            "UniF",
+                            Object::String(utf16, lopdf::StringFormat::Hexadecimal),
+                        )
+                    };
+
+                    operations.push(Operation::new("BT", vec![]));
+                    operations.push(Operation::new(
+                        "Tf",
+                        vec![Object::Name(font_res.into()), Object::Real(pdf_h)],
+                    ));
+                    operations.push(Operation::new("Tr", vec![Object::Integer(3)]));
+                    operations.push(Operation::new(
+                        "Td",
+                        vec![Object::Real(pdf_x), Object::Real(pdf_y.max(0.0))],
+                    ));
+                    operations.push(Operation::new("Tj", vec![tj_arg]));
+                    operations.push(Operation::new("ET", vec![]));
                 }
-                operations.push(Operation::new(
-                    "Td",
-                    vec![Object::Real(20.0), Object::Real(y)],
-                ));
-                operations.push(Operation::new(
-                    "Tj",
-                    vec![Object::String(
-                        lines[line_idx].as_bytes().to_vec(),
-                        lopdf::StringFormat::Literal,
-                    )],
-                ));
-                y -= 12.0;
+            } else {
+                let start_line = page_idx * lines_per_page;
+                let end_line = if page_idx == original_paths.len() - 1 {
+                    lines.len()
+                } else {
+                    (start_line + lines_per_page).min(lines.len())
+                };
+
+                let mut y = pt_h - 20.0;
+                for line_idx in start_line..end_line {
+                    if y < 20.0 {
+                        break;
+                    }
+                    let line = lines[line_idx];
+                    let (font_res, tj_arg) = if line.is_ascii() {
+                        (
+                            "F1",
+                            Object::String(line.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+                        )
+                    } else {
+                        let utf16 =
+                            crate::pdf_engine::font_unicode::encode_unicode_text_to_utf16be_bytes(
+                                line,
+                            );
+                        (
+                            "UniF",
+                            Object::String(utf16, lopdf::StringFormat::Hexadecimal),
+                        )
+                    };
+
+                    operations.push(Operation::new("BT", vec![]));
+                    operations.push(Operation::new(
+                        "Tf",
+                        vec![Object::Name(font_res.into()), Object::Real(10.0)],
+                    ));
+                    operations.push(Operation::new("Tr", vec![Object::Integer(3)]));
+                    operations.push(Operation::new(
+                        "Td",
+                        vec![Object::Real(20.0), Object::Real(y)],
+                    ));
+                    operations.push(Operation::new("Tj", vec![tj_arg]));
+                    operations.push(Operation::new("ET", vec![]));
+                    y -= 12.0;
+                }
             }
-            operations.push(Operation::new("ET", vec![]));
 
             let content = Content { operations };
             let content_bytes = content.encode().map_err(|e| e.to_string())?;
@@ -386,6 +481,7 @@ pub fn create_searchable_pdf(
 
             let mut font_res = Dictionary::new();
             font_res.set("F1", Object::Reference(font_id));
+            font_res.set("UniF", Object::Reference(uni_font_id));
 
             let mut resources = Dictionary::new();
             resources.set("XObject", Object::Dictionary(xobject_dict));
@@ -423,30 +519,39 @@ pub fn create_searchable_pdf(
         };
 
         for chunk in chunks {
-            let mut operations = vec![
-                Operation::new("BT", vec![]),
-                Operation::new("Tf", vec![Object::Name("F1".into()), Object::Real(11.0)]),
-            ];
-
+            let mut operations = Vec::new();
             let mut y = page_height - margin;
             for line in chunk {
                 y -= 14.0;
                 if y < margin {
                     break;
                 }
+                let (font_res, tj_arg) = if line.is_ascii() {
+                    (
+                        "F1",
+                        Object::String(line.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+                    )
+                } else {
+                    let utf16 =
+                        crate::pdf_engine::font_unicode::encode_unicode_text_to_utf16be_bytes(line);
+                    (
+                        "UniF",
+                        Object::String(utf16, lopdf::StringFormat::Hexadecimal),
+                    )
+                };
+
+                operations.push(Operation::new("BT", vec![]));
+                operations.push(Operation::new(
+                    "Tf",
+                    vec![Object::Name(font_res.into()), Object::Real(11.0)],
+                ));
                 operations.push(Operation::new(
                     "Td",
                     vec![Object::Real(margin), Object::Real(y)],
                 ));
-                operations.push(Operation::new(
-                    "Tj",
-                    vec![Object::String(
-                        line.as_bytes().to_vec(),
-                        lopdf::StringFormat::Literal,
-                    )],
-                ));
+                operations.push(Operation::new("Tj", vec![tj_arg]));
+                operations.push(Operation::new("ET", vec![]));
             }
-            operations.push(Operation::new("ET", vec![]));
 
             let content = Content { operations };
             let content_bytes = content.encode().map_err(|e| e.to_string())?;
@@ -457,6 +562,7 @@ pub fn create_searchable_pdf(
 
             let mut font_res = Dictionary::new();
             font_res.set("F1", Object::Reference(font_id));
+            font_res.set("UniF", Object::Reference(uni_font_id));
             let mut resources = Dictionary::new();
             resources.set("Font", Object::Dictionary(font_res));
 

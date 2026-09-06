@@ -44,14 +44,15 @@ pub fn session_rotate_page(
     }
     let page_id = page_ids[page_index];
 
-    let current_rot = if let Some(lopdf::Object::Dictionary(ref dict)) = session.doc.objects.get(&page_id) {
-        match dict.get(b"Rotate") {
-            Ok(lopdf::Object::Integer(r)) => *r as i32,
-            _ => 0,
-        }
-    } else {
-        0
-    };
+    let current_rot =
+        if let Some(lopdf::Object::Dictionary(ref dict)) = session.doc.objects.get(&page_id) {
+            match dict.get(b"Rotate") {
+                Ok(lopdf::Object::Integer(r)) => *r as i32,
+                _ => 0,
+            }
+        } else {
+            0
+        };
 
     let new_rot = (current_rot + degrees).rem_euclid(360);
     session.mutate(|doc| crate::pdf_engine::rotate_page_in_doc(doc, page_index, degrees))?;
@@ -123,7 +124,8 @@ pub fn session_update_bytes(
     let snapshot = session.save_to_bytes()?;
 
     // 2. Parse new document
-    let new_doc = lopdf::Document::load_mem(&data).map_err(|e| format!("Failed to parse updated PDF: {e}"))?;
+    let new_doc = lopdf::Document::load_mem(&data)
+        .map_err(|e| format!("Failed to parse updated PDF: {e}"))?;
 
     // 3. Push undo snapshot and update doc in place
     session.push_undo(crate::session::EditCommand::FullSnapshot {
