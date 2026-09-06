@@ -290,7 +290,7 @@ export function CommandPalette({ isOpen, onClose, commands }: CommandPaletteProp
             <span>ESC で閉じる</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span>DocForge Quick Launcher</span>
+            <span>Nagisa PDF Quick Launcher</span>
           </div>
         </div>
       </div>

@@ -473,19 +473,12 @@ pub fn embed_javascript(data: &[u8], script: &str) -> Result<Vec<u8>, String> {
 
     let open_action_id = doc.add_object(Object::Dictionary(open_action));
 
-    // Add to root
-    let root_id = if let Ok(id) = doc.trailer.get(b"Root").and_then(|o| o.as_reference()) {
-        id
-    } else {
-        let root_dict = Dictionary::new();
-        doc.add_object(Object::Dictionary(root_dict))
-    };
+    // Ensure valid Catalog root
+    let (root_id, _) = super::page_tree::ensure_catalog_and_pages_root(&mut doc);
 
     if let Some(Object::Dictionary(ref mut root_dict)) = doc.objects.get_mut(&root_id) {
         root_dict.set("OpenAction", Object::Reference(open_action_id));
     }
-
-    doc.trailer.set("Root", Object::Reference(root_id));
 
     save_doc(&mut doc)
 }
@@ -562,19 +555,12 @@ pub fn add_bookmark_tree(data: &[u8], bookmarks: &[serde_json::Value]) -> Result
         }
     }
 
-    // Add to root
-    let root_id = if let Ok(id) = doc.trailer.get(b"Root").and_then(|o| o.as_reference()) {
-        id
-    } else {
-        let root_dict = Dictionary::new();
-        doc.add_object(Object::Dictionary(root_dict))
-    };
+    // Ensure valid Catalog root
+    let (root_id, _) = super::page_tree::ensure_catalog_and_pages_root(&mut doc);
 
     if let Some(Object::Dictionary(ref mut root_dict)) = doc.objects.get_mut(&root_id) {
         root_dict.set("Outlines", Object::Reference(outline_id));
     }
-
-    doc.trailer.set("Root", Object::Reference(root_id));
 
     save_doc(&mut doc)
 }

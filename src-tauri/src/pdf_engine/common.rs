@@ -90,9 +90,7 @@ pub(crate) fn save_doc(doc: &mut Document) -> Result<Vec<u8>, String> {
 }
 
 pub(crate) fn get_page_ids(doc: &Document) -> Vec<OID> {
-    let mut pages: Vec<(u32, OID)> = doc.get_pages().into_iter().collect();
-    pages.sort_by_key(|&(page_num, _)| page_num);
-    pages.into_iter().map(|(_, oid)| oid).collect()
+    super::page_tree::get_logical_page_ids(doc)
 }
 
 pub(crate) fn get_page_dimensions(doc: &Document, page_id: OID) -> (f32, f32) {
@@ -118,6 +116,7 @@ pub(crate) fn get_page_dimensions(doc: &Document, page_id: OID) -> (f32, f32) {
     (595.0, 842.0)
 }
 
+#[allow(dead_code)]
 pub(crate) fn get_kids(doc: &Document) -> Option<Vec<Object>> {
     let root_id = doc.trailer.get(b"Root").ok()?.as_reference().ok()?;
     let root = doc.objects.get(&root_id)?;
@@ -206,131 +205,36 @@ pub(crate) fn parse_hex_color(color: &str, default: (f32, f32, f32)) -> (f32, f3
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn ensure_page_root(doc: &mut Document) -> OID {
-    let root_id = match doc.trailer.get(b"Root").and_then(|o| o.as_reference()) {
-        Ok(id) => id,
-        Err(_) => {
-            let pages_id = doc.add_object(Dictionary::new());
-            doc.trailer.set("Root", Object::Reference(pages_id));
-            return pages_id;
-        }
-    };
-    let existing = match doc.objects.get(&root_id) {
-        Some(root) => match root.as_dict() {
-            Ok(d) => d.get(b"Pages").ok().and_then(|p| p.as_reference().ok()),
-            Err(_) => None,
-        },
-        None => None,
-    };
-    if let Some(pages_id) = existing {
-        return pages_id;
-    }
-    let pages_id = doc.add_object(Dictionary::new());
-    if let Some(root) = doc.objects.get_mut(&root_id) {
-        if let Ok(d) = root.as_dict_mut() {
-            d.set("Pages", Object::Reference(pages_id));
-        }
-    }
+    let (_catalog_id, pages_id) = super::page_tree::ensure_catalog_and_pages_root(doc);
     pages_id
 }
 
 pub fn merge_pdfs(paths: &[String]) -> Result<Vec<u8>, String> {
-    if paths.is_empty() {
-        return Err("No files to merge".into());
-    }
-
-    let mut base =
-        Document::load(&paths[0]).map_err(|e| format!("Failed to load {}: {e}", paths[0]))?;
-
-    let mut kids = get_kids(&mut base).unwrap_or_default();
-
-    for path in &paths[1..] {
-        let other = Document::load(path).map_err(|e| format!("Failed to load {path}: {e}"))?;
-
-        let other_page_ids = get_page_ids(&other);
-
-        // Copy all objects from other doc, remapping IDs
-        let mut id_map: std::collections::HashMap<OID, OID> = std::collections::HashMap::new();
-
-        for (&old_id, obj) in &other.objects {
-            let new_id = base.add_object(obj.clone());
-            id_map.insert(old_id, new_id);
-        }
-
-        // Re-map all references
-        for (_old_id, new_id) in &id_map {
-            if let Some(obj) = base.objects.get_mut(new_id) {
-                remap_references(obj, &id_map);
-            }
-        }
-
-        // Add page references to kids
-        for page_oid in &other_page_ids {
-            if let Some(&new_id) = id_map.get(page_oid) {
-                kids.push(Object::Reference(new_id));
-            }
-        }
-    }
-
-    // Update the page root
-    let pages_id = ensure_page_root(&mut base);
-    if let Some(Object::Dictionary(ref mut pages_dict)) = base.objects.get_mut(&pages_id) {
-        pages_dict.set("Kids", Object::Array(kids.clone()));
-        pages_dict.set("Count", Object::Integer(kids.len() as i64));
-    }
-
-    save_doc(&mut base)
-}
-
-fn remap_references(obj: &mut Object, id_map: &std::collections::HashMap<OID, OID>) {
-    match obj {
-        Object::Reference(ref mut r) => {
-            if let Some(&new_id) = id_map.get(r) {
-                *r = new_id;
-            }
-        }
-        Object::Array(arr) => {
-            for item in arr.iter_mut() {
-                remap_references(item, id_map);
-            }
-        }
-        Object::Dictionary(dict) => {
-            for (_, v) in dict.iter_mut() {
-                remap_references(v, id_map);
-            }
-        }
-        Object::Stream(stream) => {
-            for (_, v) in stream.dict.iter_mut() {
-                remap_references(v, id_map);
-            }
-        }
-        _ => {}
-    }
+    super::page_tree::merge_pdfs_robust(paths)
 }
 
 pub fn delete_page_in_doc(doc: &mut Document, page_index: usize) -> Result<(), String> {
-    let page_ids = get_page_ids(doc);
+    let mut page_ids = super::page_tree::get_logical_page_ids(doc);
     if page_index >= page_ids.len() {
-        return Err("Page index out of range".into());
+        return Err(format!(
+            "Page index {page_index} out of range (total pages: {})",
+            page_ids.len()
+        ));
     }
-    let page_id = page_ids[page_index];
-    let mut kids = get_kids(doc).unwrap_or_default();
-    if page_index < kids.len() {
-        kids.remove(page_index);
+    if page_ids.len() <= 1 {
+        return Err("Cannot delete the only remaining page in the document".to_string());
     }
-    doc.objects.remove(&page_id);
-    let pages_id = ensure_page_root(doc);
-    if let Some(Object::Dictionary(ref mut pages_dict)) = doc.objects.get_mut(&pages_id) {
-        pages_dict.set("Kids", Object::Array(kids.clone()));
-        pages_dict.set("Count", Object::Integer(kids.len() as i64));
-    }
+    let removed_pid = page_ids.remove(page_index);
+    doc.objects.remove(&removed_pid);
+    super::page_tree::rebuild_flat_page_tree(doc, &page_ids)?;
+    doc.prune_objects();
     Ok(())
 }
 
 pub fn delete_page(data: &[u8], page_index: usize) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
-    delete_page_in_doc(&mut doc, page_index)?;
-    save_doc(&mut doc)
+    super::page_tree::delete_page_robust(data, page_index)
 }
 
 pub fn rotate_page_in_doc(
@@ -338,7 +242,7 @@ pub fn rotate_page_in_doc(
     page_index: usize,
     degrees: i32,
 ) -> Result<(), String> {
-    let page_ids = get_page_ids(doc);
+    let page_ids = super::page_tree::get_logical_page_ids(doc);
     if page_index >= page_ids.len() {
         return Err("Page index out of range".into());
     }
@@ -361,72 +265,15 @@ pub fn rotate_page(data: &[u8], page_index: usize, degrees: i32) -> Result<Vec<u
 }
 
 pub fn reorder_pages(data: &[u8], from_index: usize, to_index: usize) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
-    let mut kids = get_kids(&mut doc).unwrap_or_default();
-    if from_index >= kids.len() || to_index >= kids.len() {
-        return Err("Page index out of range".into());
-    }
-    let item = kids.remove(from_index);
-    kids.insert(to_index, item);
-    let pages_id = ensure_page_root(&mut doc);
-    if let Some(Object::Dictionary(ref mut pages_dict)) = doc.objects.get_mut(&pages_id) {
-        pages_dict.set("Kids", Object::Array(kids.clone()));
-        pages_dict.set("Count", Object::Integer(kids.len() as i64));
-    }
-    save_doc(&mut doc)
+    super::page_tree::reorder_pages_robust(data, from_index, to_index)
 }
 
 pub fn extract_pages(data: &[u8], indices: &[usize]) -> Result<Vec<u8>, String> {
-    let doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
-    let page_ids = get_page_ids(&doc);
-    let mut new_doc = Document::with_version("1.7");
-    let mut new_kids = Vec::new();
-
-    for &idx in indices {
-        if idx < page_ids.len() {
-            let page_id = page_ids[idx];
-            if let Some(obj) = doc.objects.get(&page_id) {
-                let new_page_id = new_doc.add_object(obj.clone());
-                new_kids.push(Object::Reference(new_page_id));
-            }
-        }
-    }
-
-    let pages_id = new_doc.add_object(Dictionary::new());
-    if let Some(Object::Dictionary(ref mut pages_dict)) = new_doc.objects.get_mut(&pages_id) {
-        pages_dict.set("Type", Object::Name("Pages".into()));
-        pages_dict.set("Kids", Object::Array(new_kids.clone()));
-        pages_dict.set("Count", Object::Integer(new_kids.len() as i64));
-    }
-
-    new_doc.trailer.set("Root", Object::Reference(pages_id));
-    save_doc(&mut new_doc)
+    super::page_tree::extract_pages_robust(data, indices)
 }
 
 pub fn duplicate_page(data: &[u8], page_index: usize) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
-    let page_ids = get_page_ids(&doc);
-    if page_index >= page_ids.len() {
-        return Err("Page index out of range".into());
-    }
-    let page_id = page_ids[page_index];
-    let mut kids = get_kids(&mut doc).unwrap_or_default();
-
-    // Clone the page object
-    if let Some(obj) = doc.objects.get(&page_id).cloned() {
-        let new_page_id = doc.add_object(obj);
-        // Insert the duplicate right after the original
-        let insert_at = std::cmp::min(page_index + 1, kids.len());
-        kids.insert(insert_at, Object::Reference(new_page_id));
-    }
-
-    let pages_id = ensure_page_root(&mut doc);
-    if let Some(Object::Dictionary(ref mut pages_dict)) = doc.objects.get_mut(&pages_id) {
-        pages_dict.set("Kids", Object::Array(kids.clone()));
-        pages_dict.set("Count", Object::Integer(kids.len() as i64));
-    }
-
-    save_doc(&mut doc)
+    super::page_tree::duplicate_page_robust(data, page_index)
 }
 
 pub fn add_text(
@@ -456,18 +303,18 @@ pub fn add_text(
         font_dict.set("BaseFont", Object::Name("Helvetica".into()));
         let fid = doc.add_object(Object::Dictionary(font_dict));
         (
-            "DocForgeTextHelv",
+            format!("DocForgeTextHelv_{}_{}", fid.0, fid.1),
             fid,
             Object::String(text.as_bytes().to_vec(), lopdf::StringFormat::Literal),
         )
     } else {
-        // Universal Type0 Unicode font pipeline with Identity-H and ToUnicode CMap
-        let fid = super::font_unicode::ensure_unicode_font(&mut doc, "DocForgeUnicodeFont");
-        let utf16be_bytes = super::font_unicode::encode_unicode_text_to_utf16be_bytes(text);
+        // True embedded Type0/CIDFontType2 with real TTF cmap, dynamic widths, and ToUnicode
+        let (fid, encoded_cids) =
+            super::font_unicode::embed_and_encode_unicode_text(&mut doc, text)?;
         (
-            "DocForgeUniFont",
+            format!("DocForgeUniFont_{}_{}", fid.0, fid.1),
             fid,
-            Object::String(utf16be_bytes, lopdf::StringFormat::Hexadecimal),
+            Object::String(encoded_cids, lopdf::StringFormat::Hexadecimal),
         )
     };
 
@@ -482,7 +329,7 @@ pub fn add_text(
             .unwrap_or_default(),
         _ => Dictionary::new(),
     };
-    fonts_dict.set(font_res_name, Object::Reference(font_id));
+    fonts_dict.set(font_res_name.clone(), Object::Reference(font_id));
     resources_dict.set("Font", Object::Dictionary(fonts_dict));
     if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
         page_dict.set("Resources", Object::Dictionary(resources_dict));

@@ -1,4 +1,4 @@
-use docforge::pdf_engine::*;
+use nagisa_pdf::pdf_engine::*;
 use std::env;
 use std::fs;
 use std::process::exit;
@@ -6,9 +6,9 @@ use std::process::exit;
 fn print_usage() {
     eprintln!(
         r#"
-DocForge CLI - High-Performance Professional PDF Engine
+Nagisa CLI - High-Performance Professional PDF Engine
 ===============================================================
-Usage: docforge-cli <command> [arguments...]
+Usage: nagisa <command> [arguments...]
 
 Core Page Commands:
   info        <input.pdf>                              Show metadata, page count, and dimensions

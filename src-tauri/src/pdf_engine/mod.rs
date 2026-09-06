@@ -21,6 +21,8 @@ pub mod text_block_ops;
 pub mod text_edit;
 
 pub use font_unicode::*;
+pub mod page_tree;
+pub use page_tree::*;
 
 pub mod compare;
 pub mod repair;

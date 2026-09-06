@@ -323,9 +323,24 @@ pub fn create_searchable_pdf(
     font_dict.set("BaseFont", Object::Name("Helvetica".into()));
     let font_id = doc.add_object(Object::Dictionary(font_dict));
 
-    // Type0 Unicode font for Japanese / CJK OCR text
-    let uni_font_id =
-        crate::pdf_engine::font_unicode::ensure_unicode_font(&mut doc, "DocForgeOCRUniFont");
+    // Type0 Unicode font with true TTF font embedding, CIDToGIDMap, /W and ToUnicode CMap
+    // Pre-scan all text across words and lines to build a complete character mapping
+    let mut all_ocr_text = ocr_text.to_string();
+    for path in original_paths {
+        if let Ok((_, _, _, w)) = run_tesseract(path, "jpn+eng") {
+            for word in w {
+                all_ocr_text.push_str(&word.text);
+                all_ocr_text.push(' ');
+            }
+        }
+    }
+    if all_ocr_text.is_empty() {
+        all_ocr_text.push(' ');
+    }
+
+    let unicode_encoder =
+        crate::pdf_engine::font_unicode::create_unicode_font_encoder(&mut doc, &all_ocr_text)?;
+    let uni_font_id = unicode_encoder.font_id;
 
     let mut page_refs = Vec::new();
     let lines: Vec<&str> = ocr_text.lines().collect();
@@ -400,13 +415,10 @@ pub fn create_searchable_pdf(
                             ),
                         )
                     } else {
-                        let utf16 =
-                            crate::pdf_engine::font_unicode::encode_unicode_text_to_utf16be_bytes(
-                                &word.text,
-                            );
+                        let encoded_cids = unicode_encoder.encode_text(&word.text);
                         (
                             "UniF",
-                            Object::String(utf16, lopdf::StringFormat::Hexadecimal),
+                            Object::String(encoded_cids, lopdf::StringFormat::Hexadecimal),
                         )
                     };
 
@@ -443,13 +455,10 @@ pub fn create_searchable_pdf(
                             Object::String(line.as_bytes().to_vec(), lopdf::StringFormat::Literal),
                         )
                     } else {
-                        let utf16 =
-                            crate::pdf_engine::font_unicode::encode_unicode_text_to_utf16be_bytes(
-                                line,
-                            );
+                        let encoded_cids = unicode_encoder.encode_text(line);
                         (
                             "UniF",
-                            Object::String(utf16, lopdf::StringFormat::Hexadecimal),
+                            Object::String(encoded_cids, lopdf::StringFormat::Hexadecimal),
                         )
                     };
 

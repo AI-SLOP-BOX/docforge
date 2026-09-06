@@ -38,15 +38,15 @@ export default function Sidebar({ currentView, onNavigate }: Props) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{
             width: 32, height: 32, borderRadius: 'var(--radius-sm)',
-            background: 'var(--accent-gradient)',
+            overflow: 'hidden',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', boxShadow: '0 3px 12px rgba(47, 129, 247, 0.35)'
+            boxShadow: '0 3px 12px rgba(47, 129, 247, 0.35)'
           }}>
-            <ZapIcon size={18} color="#fff" />
+            <img src="/favicon.png" alt="Nagisa PDF" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
           </div>
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: 6 }}>
-              DocForge
+              Nagisa PDF
               <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: 'rgba(47, 129, 247, 0.15)', color: 'var(--accent)' }}>
                 PRO
               </span>

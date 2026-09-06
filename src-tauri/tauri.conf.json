@@ -1,7 +1,7 @@
 {
-  "productName": "DocForge",
+  "productName": "Nagisa PDF",
   "version": "1.0.0",
-  "identifier": "com.docforge.app",
+  "identifier": "com.nagisa.pdf",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "DocForge — PDF & Document Tool",
+        "title": "Nagisa PDF — PDF & Document Tool",
         "width": 1280,
         "height": 800,
         "minWidth": 900,
@@ -34,6 +34,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "resources": [
+      "../assets/fonts/*"
     ]
   }
 }

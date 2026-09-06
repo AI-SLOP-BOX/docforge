@@ -101,6 +101,14 @@ pub fn add_header_footer(
     let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc).clone();
 
+    // Ensure /Helvetica font resource is created
+    let mut font_dict = Dictionary::new();
+    font_dict.set("Type", Object::Name(b"Font".to_vec()));
+    font_dict.set("Subtype", Object::Name(b"Type1".to_vec()));
+    font_dict.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+    font_dict.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+    let font_id = doc.add_object(Object::Dictionary(font_dict));
+
     for (i, &page_id) in page_ids.iter().enumerate() {
         let (_pw, ph) = get_page_dimensions(&doc, page_id);
 
@@ -109,7 +117,10 @@ pub fn add_header_footer(
             lopdf::content::Operation::new("BT", vec![]),
             lopdf::content::Operation::new(
                 "Tf",
-                vec![Object::Name("Helvetica".into()), Object::Real(font_size)],
+                vec![
+                    Object::Name("HeaderFooterFont".into()),
+                    Object::Real(font_size),
+                ],
             ),
             lopdf::content::Operation::new(
                 "rg",
@@ -136,7 +147,10 @@ pub fn add_header_footer(
         operations.push(lopdf::content::Operation::new("BT", vec![]));
         operations.push(lopdf::content::Operation::new(
             "Tf",
-            vec![Object::Name("Helvetica".into()), Object::Real(font_size)],
+            vec![
+                Object::Name("HeaderFooterFont".into()),
+                Object::Real(font_size),
+            ],
         ));
 
         let footer = footer_text
@@ -164,6 +178,25 @@ pub fn add_header_footer(
         stream.dict.set("Type", Object::Name("Content".into()));
         let content_id = doc.add_object(stream);
 
+        // Register font in page resources safely
+        let mut resources = resolve_page_resources(&doc, page_id);
+        let mut fonts = match resources.get(b"Font") {
+            Ok(Object::Dictionary(f)) => f.clone(),
+            Ok(Object::Reference(f_ref)) => doc
+                .objects
+                .get(f_ref)
+                .and_then(|o| o.as_dict().ok())
+                .cloned()
+                .unwrap_or_default(),
+            _ => Dictionary::new(),
+        };
+        fonts.set("HeaderFooterFont", Object::Reference(font_id));
+        resources.set("Font", Object::Dictionary(fonts));
+
+        if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
+            page_dict.set("Resources", Object::Dictionary(resources));
+        }
+
         append_page_content(&mut doc, page_id, content_id)?;
     }
 
@@ -182,14 +215,7 @@ pub fn add_bookmark(data: &[u8], title: &str, page_index: usize) -> Result<Vec<u
     let page_id = page_ids[page_index];
 
     // Ensure Catalog exists
-    let root_id = if let Ok(id) = doc.trailer.get(b"Root").and_then(|o| o.as_reference()) {
-        id
-    } else {
-        let root_dict = Dictionary::new();
-        let id = doc.add_object(Object::Dictionary(root_dict));
-        doc.trailer.set("Root", Object::Reference(id));
-        id
-    };
+    let (root_id, _) = super::page_tree::ensure_catalog_and_pages_root(&mut doc);
 
     // Check if Catalog already has Outlines
     let outline_id = if let Some(Object::Dictionary(ref root_dict)) = doc.objects.get(&root_id) {
@@ -289,6 +315,14 @@ pub fn add_bates_number(
     let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
     let page_ids = get_page_ids(&doc).clone();
 
+    // Ensure /Helvetica font resource is created
+    let mut font_dict = Dictionary::new();
+    font_dict.set("Type", Object::Name(b"Font".to_vec()));
+    font_dict.set("Subtype", Object::Name(b"Type1".to_vec()));
+    font_dict.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+    font_dict.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+    let font_id = doc.add_object(Object::Dictionary(font_dict));
+
     for (i, &page_id) in page_ids.iter().enumerate() {
         let (pw, _ph) = get_page_dimensions(&doc, page_id);
 
@@ -299,7 +333,7 @@ pub fn add_bates_number(
             lopdf::content::Operation::new("BT", vec![]),
             lopdf::content::Operation::new(
                 "Tf",
-                vec![Object::Name("Helvetica".into()), Object::Real(font_size)],
+                vec![Object::Name("BatesFont".into()), Object::Real(font_size)],
             ),
             lopdf::content::Operation::new(
                 "rg",
@@ -326,6 +360,25 @@ pub fn add_bates_number(
         let mut stream = Stream::new(Dictionary::new(), content_bytes);
         stream.dict.set("Type", Object::Name("Content".into()));
         let content_id = doc.add_object(stream);
+
+        // Register font in page resources safely
+        let mut resources = resolve_page_resources(&doc, page_id);
+        let mut fonts = match resources.get(b"Font") {
+            Ok(Object::Dictionary(f)) => f.clone(),
+            Ok(Object::Reference(f_ref)) => doc
+                .objects
+                .get(f_ref)
+                .and_then(|o| o.as_dict().ok())
+                .cloned()
+                .unwrap_or_default(),
+            _ => Dictionary::new(),
+        };
+        fonts.set("BatesFont", Object::Reference(font_id));
+        resources.set("Font", Object::Dictionary(fonts));
+
+        if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
+            page_dict.set("Resources", Object::Dictionary(resources));
+        }
 
         append_page_content(&mut doc, page_id, content_id)?;
     }

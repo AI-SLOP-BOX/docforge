@@ -3,6 +3,38 @@ mod tests {
     use crate::pdf_engine::*;
     use lopdf::{Dictionary, Document, Object};
 
+    fn find_tool(name: &str) -> Option<std::path::PathBuf> {
+        // 1. Check PATH env variable
+        if let Some(paths) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&paths) {
+                let exe_name = if cfg!(windows) {
+                    format!("{}.exe", name)
+                } else {
+                    name.to_string()
+                };
+                let full_path = dir.join(&exe_name);
+                if full_path.is_file() {
+                    return Some(full_path);
+                }
+            }
+        }
+        // 2. Check standard installation directories
+        let common_dirs = [
+            "/usr/bin",
+            "/usr/local/bin",
+            "/opt/homebrew/bin",
+            "/bin",
+            "/snap/bin",
+        ];
+        for dir in &common_dirs {
+            let p = std::path::Path::new(dir).join(name);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+        None
+    }
+
     fn create_test_pdf(num_pages: usize) -> Vec<u8> {
         let mut doc = Document::with_version("1.7");
         let pages_id = doc.add_object(Object::Dictionary(Dictionary::new()));
@@ -14,6 +46,18 @@ mod tests {
                 Dictionary::new(),
                 content.into_bytes(),
             )));
+
+            let mut f1_dict = Dictionary::new();
+            f1_dict.set("Type", Object::Name("Font".into()));
+            f1_dict.set("Subtype", Object::Name("Type1".into()));
+            f1_dict.set("BaseFont", Object::Name("Helvetica".into()));
+            let f1_id = doc.add_object(Object::Dictionary(f1_dict));
+
+            let mut font_dict = Dictionary::new();
+            font_dict.set("F1", Object::Reference(f1_id));
+
+            let mut res_dict = Dictionary::new();
+            res_dict.set("Font", Object::Dictionary(font_dict));
 
             let mut page_dict = Dictionary::new();
             page_dict.set("Type", Object::Name("Page".into()));
@@ -27,6 +71,7 @@ mod tests {
                     Object::Real(842.0),
                 ]),
             );
+            page_dict.set("Resources", Object::Dictionary(res_dict));
             page_dict.set("Contents", Object::Reference(content_id));
 
             let page_id = doc.add_object(Object::Dictionary(page_dict));
@@ -1373,24 +1418,28 @@ mod tests {
             std::env::temp_dir().join(format!("cjk_test_{}.pdf", std::process::id()));
         std::fs::write(&tmp_pdf_path, &current_pdf).unwrap();
 
-        let pdftotext_res = std::process::Command::new("/opt/homebrew/bin/pdftotext")
-            .arg(&tmp_pdf_path)
-            .arg("-")
-            .output();
+        if let Some(tool) = find_tool("pdftotext") {
+            let pdftotext_res = std::process::Command::new(tool)
+                .arg(&tmp_pdf_path)
+                .arg("-")
+                .output();
 
-        let _ = std::fs::remove_file(&tmp_pdf_path);
-
-        if let Ok(output) = pdftotext_res {
-            if output.status.success() {
-                let extracted_text = String::from_utf8_lossy(&output.stdout);
-                for target_str in &strings_to_test {
-                    assert!(
-                        extracted_text.contains(target_str),
-                        "pdftotext output must contain exact Unicode string '{target_str}'. Got: {extracted_text}"
-                    );
+            if let Ok(output) = pdftotext_res {
+                if output.status.success() {
+                    let extracted_text = String::from_utf8_lossy(&output.stdout);
+                    for target_str in &strings_to_test {
+                        assert!(
+                            extracted_text.contains(target_str),
+                            "pdftotext output must contain exact Unicode string '{target_str}'. Got: {extracted_text}"
+                        );
+                    }
                 }
             }
+        } else {
+            eprintln!("pdftotext not found on system; skipped external text extraction assertion");
         }
+
+        let _ = std::fs::remove_file(&tmp_pdf_path);
     }
 
     #[test]
@@ -1423,33 +1472,551 @@ mod tests {
         assert!(!pids.is_empty(), "Reloaded PDF must have pages");
 
         // 3. Extract text via external pdftotext
-        let pdftotext_res = std::process::Command::new("/opt/homebrew/bin/pdftotext")
-            .arg(&tmp_pdf_path)
-            .arg("-")
-            .output()
-            .expect("pdftotext execution");
+        if let Some(tool) = find_tool("pdftotext") {
+            let pdftotext_res = std::process::Command::new(tool)
+                .arg(&tmp_pdf_path)
+                .arg("-")
+                .output()
+                .expect("pdftotext execution");
 
-        let _ = std::fs::remove_file(&tmp_pdf_path);
+            let _ = std::fs::remove_file(&tmp_pdf_path);
 
-        assert!(pdftotext_res.status.success(), "pdftotext must succeed");
-        let extracted_text = String::from_utf8_lossy(&pdftotext_res.stdout);
+            assert!(pdftotext_res.status.success(), "pdftotext must succeed");
+            let extracted_text = String::from_utf8_lossy(&pdftotext_res.stdout);
 
-        // 4. Strict assertions: must be exact fixture, not mutated
+            // 4. Strict assertions: must be exact fixture, not mutated
+            assert!(
+                extracted_text.contains(unchi_fixture),
+                "Saved and reloaded PDF must contain unmutated '{unchi_fixture}'. Got: '{extracted_text}'"
+            );
+            assert!(
+                !extracted_text.contains("ウンチ"),
+                "Forbidden mutation: Katakana ウンチ detected!"
+            );
+            assert!(
+                !extracted_text.contains("うんち "),
+                "Forbidden mutation: Trailing space in うんち detected!"
+            );
+            assert!(
+                !extracted_text.contains(" うんち"),
+                "Forbidden mutation: Leading space in うんち detected!"
+            );
+        } else {
+            let _ = std::fs::remove_file(&tmp_pdf_path);
+            eprintln!("pdftotext not found on system; skipped external text extraction assertion");
+        }
+    }
+
+    #[test]
+    fn test_hostile_nested_page_tree_ops() {
+        use crate::pdf_engine::page_tree::*;
+        use lopdf::Stream;
+
+        // Construct a hostile 2-level nested page tree with inherited attributes:
+        // Root Pages (MediaBox = [0, 0, 600, 800])
+        //   ├─ Intermediate Pages A (Rotate = 90, MediaBox = [0, 0, 500, 700])
+        //   │    ├─ Page 1 (has Image XObject and Flate stream)
+        //   │    └─ Page 2 (Contents Array of 2 streams)
+        //   └─ Intermediate Pages B (Rotate = 180)
+        //        ├─ Page 3 (Annotation)
+        //        └─ Page 4 (plain)
+        let mut doc = Document::with_version("1.7");
+
+        // MediaBox inherited at root Pages
+        let root_pages_id = doc.new_object_id();
+
+        // Intermediate Pages A
+        let pages_a_id = doc.new_object_id();
+        // Intermediate Pages B
+        let pages_b_id = doc.new_object_id();
+
+        // 1. Page 1: with FlateDecode Content and Form/Image XObject
+        let img_stream_bytes = vec![0xFF; 64];
+        let mut img_dict = Dictionary::new();
+        img_dict.set("Type", Object::Name("XObject".into()));
+        img_dict.set("Subtype", Object::Name("Image".into()));
+        img_dict.set("Width", Object::Integer(8));
+        img_dict.set("Height", Object::Integer(8));
+        img_dict.set("ColorSpace", Object::Name("DeviceRGB".into()));
+        img_dict.set("BitsPerComponent", Object::Integer(8));
+        let img_id = doc.add_object(Stream::new(img_dict, img_stream_bytes));
+
+        let mut xobj_dict = Dictionary::new();
+        xobj_dict.set("Im1", Object::Reference(img_id));
+        let mut res1_dict = Dictionary::new();
+        res1_dict.set("XObject", Object::Dictionary(xobj_dict));
+
+        let c1 = lopdf::content::Content {
+            operations: vec![
+                lopdf::content::Operation::new("q", vec![]),
+                lopdf::content::Operation::new("Do", vec![Object::Name("Im1".into())]),
+                lopdf::content::Operation::new("Q", vec![]),
+            ],
+        };
+        let c1_bytes = c1.encode().unwrap();
+        let c1_stream = Stream::new(Dictionary::new(), c1_bytes);
+        let c1_id = doc.add_object(c1_stream);
+
+        let mut p1_dict = Dictionary::new();
+        p1_dict.set("Type", Object::Name("Page".into()));
+        p1_dict.set("Parent", Object::Reference(pages_a_id));
+        p1_dict.set("Resources", Object::Dictionary(res1_dict));
+        p1_dict.set("Contents", Object::Reference(c1_id));
+        let p1_id = doc.add_object(Object::Dictionary(p1_dict));
+
+        // 2. Page 2: Contents Array of 2 streams
+        let sa = doc.add_object(Stream::new(
+            Dictionary::new(),
+            b"q 1 0 0 1 10 10 cm Q\n".to_vec(),
+        ));
+        let sb = doc.add_object(Stream::new(
+            Dictionary::new(),
+            b"q 1 0 0 1 20 20 cm Q\n".to_vec(),
+        ));
+        let mut p2_dict = Dictionary::new();
+        p2_dict.set("Type", Object::Name("Page".into()));
+        p2_dict.set("Parent", Object::Reference(pages_a_id));
+        p2_dict.set(
+            "Contents",
+            Object::Array(vec![Object::Reference(sa), Object::Reference(sb)]),
+        );
+        let p2_id = doc.add_object(Object::Dictionary(p2_dict));
+
+        // 3. Page 3: with Annotation
+        let mut annot_dict = Dictionary::new();
+        annot_dict.set("Type", Object::Name("Annot".into()));
+        annot_dict.set("Subtype", Object::Name("Text".into()));
+        annot_dict.set(
+            "Rect",
+            Object::Array(vec![
+                Object::Integer(10),
+                Object::Integer(10),
+                Object::Integer(50),
+                Object::Integer(50),
+            ]),
+        );
+        annot_dict.set(
+            "Contents",
+            Object::String(b"Hostile Annotation".to_vec(), lopdf::StringFormat::Literal),
+        );
+        let annot_id = doc.add_object(Object::Dictionary(annot_dict));
+
+        let mut p3_dict = Dictionary::new();
+        p3_dict.set("Type", Object::Name("Page".into()));
+        p3_dict.set("Parent", Object::Reference(pages_b_id));
+        p3_dict.set("Annots", Object::Array(vec![Object::Reference(annot_id)]));
+        let p3_id = doc.add_object(Object::Dictionary(p3_dict));
+
+        // 4. Page 4: plain
+        let mut p4_dict = Dictionary::new();
+        p4_dict.set("Type", Object::Name("Page".into()));
+        p4_dict.set("Parent", Object::Reference(pages_b_id));
+        let p4_id = doc.add_object(Object::Dictionary(p4_dict));
+
+        // Pages A
+        let mut pa_dict = Dictionary::new();
+        pa_dict.set("Type", Object::Name("Pages".into()));
+        pa_dict.set("Parent", Object::Reference(root_pages_id));
+        pa_dict.set(
+            "Kids",
+            Object::Array(vec![Object::Reference(p1_id), Object::Reference(p2_id)]),
+        );
+        pa_dict.set("Count", Object::Integer(2));
+        pa_dict.set("Rotate", Object::Integer(90));
+        pa_dict.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(500),
+                Object::Integer(700),
+            ]),
+        );
+        doc.objects.insert(pages_a_id, Object::Dictionary(pa_dict));
+
+        // Pages B
+        let mut pb_dict = Dictionary::new();
+        pb_dict.set("Type", Object::Name("Pages".into()));
+        pb_dict.set("Parent", Object::Reference(root_pages_id));
+        pb_dict.set(
+            "Kids",
+            Object::Array(vec![Object::Reference(p3_id), Object::Reference(p4_id)]),
+        );
+        pb_dict.set("Count", Object::Integer(2));
+        pb_dict.set("Rotate", Object::Integer(180));
+        doc.objects.insert(pages_b_id, Object::Dictionary(pb_dict));
+
+        // Root Pages
+        let mut rpages_dict = Dictionary::new();
+        rpages_dict.set("Type", Object::Name("Pages".into()));
+        rpages_dict.set(
+            "Kids",
+            Object::Array(vec![
+                Object::Reference(pages_a_id),
+                Object::Reference(pages_b_id),
+            ]),
+        );
+        rpages_dict.set("Count", Object::Integer(4));
+        rpages_dict.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(600),
+                Object::Integer(800),
+            ]),
+        );
+        doc.objects
+            .insert(root_pages_id, Object::Dictionary(rpages_dict));
+
+        // Catalog
+        let mut cat_dict = Dictionary::new();
+        cat_dict.set("Type", Object::Name("Catalog".into()));
+        cat_dict.set("Pages", Object::Reference(root_pages_id));
+        let cat_id = doc.add_object(Object::Dictionary(cat_dict));
+
+        doc.trailer.set("Root", Object::Reference(cat_id));
+
+        let mut hostile_pdf_bytes = Vec::new();
+        doc.save_to(&mut hostile_pdf_bytes)
+            .expect("Save hostile PDF");
+
+        // Verify logical page resolution across 2-level nested tree
+        let parsed_doc = Document::load_mem(&hostile_pdf_bytes).expect("Load hostile PDF");
+        let logical_ids = get_logical_page_ids(&parsed_doc);
+        assert_eq!(logical_ids.len(), 4, "Must resolve 4 logical pages");
+        assert_eq!(logical_ids, vec![p1_id, p2_id, p3_id, p4_id]);
+
+        // TEST 1: Delete logical page 2 (which is p3_id in nested Pages B!)
+        let after_del_bytes = delete_page(&hostile_pdf_bytes, 2).expect("Delete logical page 2");
+        let del_doc = Document::load_mem(&after_del_bytes).expect("Load after delete");
+        let del_page_ids = get_logical_page_ids(&del_doc);
+        assert_eq!(del_page_ids.len(), 3, "Page count must now be 3");
+
+        // TEST 2: Extract pages [0, 2] from hostile PDF (p1 with image, and p3 with annot/rotate 180)
+        let extracted_bytes = extract_pages(&hostile_pdf_bytes, &[0, 2]).expect("Extract pages");
+        let ext_doc = Document::load_mem(&extracted_bytes).expect("Load extracted PDF");
+        let ext_page_ids = get_logical_page_ids(&ext_doc);
+        assert_eq!(ext_page_ids.len(), 2, "Extracted doc must have 2 pages");
+
+        // Verify inherited MediaBox and Rotate were materialized on extracted page 0
+        let ext_p0 = ext_doc
+            .objects
+            .get(&ext_page_ids[0])
+            .unwrap()
+            .as_dict()
+            .unwrap();
         assert!(
-            extracted_text.contains(unchi_fixture),
-            "Extracted text must contain exact fixture '{unchi_fixture}'. Got:\n{extracted_text}"
+            ext_p0.get(b"MediaBox").is_ok(),
+            "Extracted page 0 must have materialized MediaBox"
+        );
+        assert_eq!(
+            ext_p0.get(b"Rotate").unwrap().as_i64().unwrap(),
+            90,
+            "Extracted page 0 must have materialized Rotate = 90"
+        );
+        // Verify XObject resource was copied over
+        assert!(ext_p0.get(b"Resources").is_ok(), "Resources must be copied");
+
+        // Verify extracted page 1 (was logical page 2 in Pages B)
+        let ext_p1 = ext_doc
+            .objects
+            .get(&ext_page_ids[1])
+            .unwrap()
+            .as_dict()
+            .unwrap();
+        assert_eq!(
+            ext_p1.get(b"Rotate").unwrap().as_i64().unwrap(),
+            180,
+            "Extracted page 1 must have materialized Rotate = 180"
         );
         assert!(
-            !extracted_text.contains("これはウンチです"),
-            "Fixture must NOT be mutated to katakana ウンチ"
+            ext_p1.get(b"Annots").is_ok(),
+            "Annots must be preserved on extracted page"
+        );
+
+        // TEST 3: Merge hostile PDF with extracted PDF
+        let merged_bytes =
+            merge_pdf_buffers_robust(&[&hostile_pdf_bytes, &extracted_bytes]).expect("Merge PDFs");
+        let merged_doc = Document::load_mem(&merged_bytes).expect("Load merged PDF");
+        let merged_ids = get_logical_page_ids(&merged_doc);
+        assert_eq!(merged_ids.len(), 6, "Merged PDF must have 4 + 2 = 6 pages");
+
+        // Verify every page in merged document has /Parent pointing to the canonical /Pages
+        let cat_ref = merged_doc
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let cat = merged_doc.objects.get(&cat_ref).unwrap().as_dict().unwrap();
+        assert_eq!(cat.get(b"Type").unwrap().as_name().unwrap(), b"Catalog");
+        let pages_ref = cat.get(b"Pages").unwrap().as_reference().unwrap();
+        for &pid in &merged_ids {
+            let pdict = merged_doc.objects.get(&pid).unwrap().as_dict().unwrap();
+            assert_eq!(
+                pdict.get(b"Parent").unwrap().as_reference().unwrap(),
+                pages_ref,
+                "Every page's /Parent must point to canonical /Pages"
+            );
+        }
+
+        // TEST 4: Reorder pages on hostile PDF
+        let reordered_bytes = reorder_pages(&hostile_pdf_bytes, 3, 0).expect("Reorder pages");
+        let reord_doc = Document::load_mem(&reordered_bytes).expect("Load reordered PDF");
+        let reord_ids = get_logical_page_ids(&reord_doc);
+        assert_eq!(reord_ids.len(), 4, "Reordered PDF must have 4 pages");
+
+        // External tool verification via qpdf --check and pdfinfo
+        let tmp_merged =
+            std::env::temp_dir().join(format!("hostile_merged_{}.pdf", std::process::id()));
+        std::fs::write(&tmp_merged, &merged_bytes).unwrap();
+
+        if let Some(tool) = find_tool("qpdf") {
+            let qpdf_status = std::process::Command::new(tool)
+                .arg("--check")
+                .arg(&tmp_merged)
+                .status();
+            if let Ok(st) = qpdf_status {
+                assert!(st.success(), "qpdf --check must succeed on merged hostile PDF");
+            }
+        } else {
+            eprintln!("qpdf not found on system; skipped hostile PDF qpdf check");
+        }
+
+        let _ = std::fs::remove_file(&tmp_merged);
+    }
+
+    #[test]
+    fn test_unicode_render_regression_full() {
+        let initial_pdf = create_test_pdf(1);
+        let mandatory_lines = vec![
+            "これはうんちです",
+            "こんにちは世界",
+            "文書作成テスト",
+            "PDFテスト 123 ABC",
+            "漢字・ひらがな・カタカナ",
+        ];
+
+        let mut current_pdf = initial_pdf;
+        let mut y = 700.0;
+        for line in &mandatory_lines {
+            current_pdf = add_text(&current_pdf, 0, line, 50.0, y, 16.0, "#1A202C")
+                .expect("add_text must succeed for all mandatory lines");
+            y -= 45.0;
+        }
+
+        let tmp_pdf =
+            std::env::temp_dir().join(format!("unicode_render_test_{}.pdf", std::process::id()));
+        std::fs::write(&tmp_pdf, &current_pdf).unwrap();
+
+        // 1. Check with qpdf
+        if let Some(tool) = find_tool("qpdf") {
+            let qpdf_res = std::process::Command::new(tool)
+                .arg("--check")
+                .arg(&tmp_pdf)
+                .output();
+            if let Ok(res) = qpdf_res {
+                assert!(
+                    res.status.success(),
+                    "qpdf --check must pass for Unicode PDF"
+                );
+            }
+        } else {
+            eprintln!("qpdf not found on system; skipped unicode qpdf check");
+        }
+
+        // 2. Extract with pdftotext
+        if let Some(tool) = find_tool("pdftotext") {
+            let pdftotext_res = std::process::Command::new(tool)
+                .arg(&tmp_pdf)
+                .arg("-")
+                .output();
+            if let Ok(res) = pdftotext_res {
+                assert!(res.status.success(), "pdftotext must succeed");
+                let extracted = String::from_utf8_lossy(&res.stdout);
+                for line in &mandatory_lines {
+                    assert!(
+                        extracted.contains(line),
+                        "Extracted text must contain '{line}'. Got:\n{extracted}"
+                    );
+                }
+            }
+        } else {
+            eprintln!("pdftotext not found on system; skipped unicode pdftotext check");
+        }
+
+        // 3. Render with pdftoppm to PNG and verify rendering success
+        let tmp_png_prefix =
+            std::env::temp_dir().join(format!("rendered_page_{}", std::process::id()));
+        if let Some(tool) = find_tool("pdftoppm") {
+            let pdftoppm_res = std::process::Command::new(tool)
+                .arg("-png")
+                .arg("-r")
+                .arg("150")
+                .arg(&tmp_pdf)
+                .arg(&tmp_png_prefix)
+                .status();
+            if let Ok(st) = pdftoppm_res {
+                assert!(st.success(), "pdftoppm must succeed");
+                let expected_png = format!("{}-1.png", tmp_png_prefix.display());
+                assert!(
+                    std::path::Path::new(&expected_png).exists(),
+                    "Rendered PNG must be produced by pdftoppm"
+                );
+                let metadata = std::fs::metadata(&expected_png).unwrap();
+                assert!(
+                    metadata.len() > 1000,
+                    "Rendered PNG must not be empty or blank"
+                );
+                let _ = std::fs::remove_file(&expected_png);
+            }
+        } else {
+            eprintln!("pdftoppm not found on system; skipped unicode pdftoppm check");
+        }
+
+        let _ = std::fs::remove_file(&tmp_pdf);
+    }
+
+    #[test]
+    fn test_delete_page_retains_inherited_attributes() {
+        use crate::pdf_engine::page_tree::*;
+
+        // Create a tree where an intermediate Pages node sets Rotate = 90 and MediaBox = [0, 0, 400, 600]
+        let mut doc = Document::with_version("1.7");
+        let (_root_id, pages_id) = ensure_catalog_and_pages_root(&mut doc);
+
+        let p1_id = doc.add_object(Object::Dictionary(Dictionary::new()));
+        let p2_id = doc.add_object(Object::Dictionary(Dictionary::new()));
+
+        let mut inter_dict = Dictionary::new();
+        inter_dict.set("Type", Object::Name(b"Pages".to_vec()));
+        inter_dict.set("Parent", Object::Reference(pages_id));
+        inter_dict.set("Rotate", Object::Integer(90));
+        inter_dict.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(400),
+                Object::Integer(600),
+            ]),
+        );
+        inter_dict.set(
+            "Kids",
+            Object::Array(vec![Object::Reference(p1_id), Object::Reference(p2_id)]),
+        );
+        inter_dict.set("Count", Object::Integer(2));
+        let inter_id = doc.add_object(Object::Dictionary(inter_dict));
+
+        // Connect p1 and p2 to inter_id
+        if let Some(Object::Dictionary(ref mut p1)) = doc.objects.get_mut(&p1_id) {
+            p1.set("Type", Object::Name(b"Page".to_vec()));
+            p1.set("Parent", Object::Reference(inter_id));
+        }
+        if let Some(Object::Dictionary(ref mut p2)) = doc.objects.get_mut(&p2_id) {
+            p2.set("Type", Object::Name(b"Page".to_vec()));
+            p2.set("Parent", Object::Reference(inter_id));
+        }
+
+        // Connect root pages to intermediate
+        if let Some(Object::Dictionary(ref mut root_pages)) = doc.objects.get_mut(&pages_id) {
+            root_pages.set("Kids", Object::Array(vec![Object::Reference(inter_id)]));
+            root_pages.set("Count", Object::Integer(2));
+        }
+
+        let mut raw_bytes = Vec::new();
+        doc.save_to(&mut raw_bytes).expect("Save raw hostile doc");
+
+        // Now delete page index 1 (p2). Page 0 (p1) must retain Rotate = 90 and MediaBox!
+        let modified_bytes = delete_page(&raw_bytes, 1).expect("delete_page must succeed");
+        let modified_doc = Document::load_mem(&modified_bytes).expect("Reload after delete");
+
+        let logical_pages = get_logical_page_ids(&modified_doc);
+        assert_eq!(logical_pages.len(), 1, "Must have exactly 1 page remaining");
+
+        let remaining_pdict = modified_doc
+            .objects
+            .get(&logical_pages[0])
+            .and_then(|o| o.as_dict().ok())
+            .expect("Remaining page dictionary");
+
+        let rot = remaining_pdict
+            .get(b"Rotate")
+            .ok()
+            .and_then(|r| r.as_i64().ok())
+            .unwrap_or(0);
+        assert_eq!(
+            rot, 90,
+            "Remaining page must retain inherited Rotate = 90 after sibling deletion"
+        );
+
+        let mbox = remaining_pdict
+            .get(b"MediaBox")
+            .ok()
+            .and_then(|m| m.as_array().ok());
+        assert!(
+            mbox.is_some(),
+            "Remaining page must retain inherited MediaBox after sibling deletion"
+        );
+    }
+
+    #[test]
+    fn test_copy_object_graph_preserves_widget_parent_and_skips_annot_p() {
+        use crate::pdf_engine::page_tree::copy_object_graph;
+        use std::collections::HashMap;
+
+        let mut src_doc = Document::with_version("1.7");
+        let mut dest_doc = Document::with_version("1.7");
+        // Add dummy objects in dest_doc so its OIDs don't coincidentally match src_doc
+        dest_doc.add_object(Object::Integer(42));
+        dest_doc.add_object(Object::Integer(43));
+
+        // Create a Source Page
+        let src_page_id = src_doc.add_object(Object::Dictionary(Dictionary::new()));
+
+        // Create an AcroForm Field and a Widget with /Parent pointing to Field
+        let mut field_dict = Dictionary::new();
+        field_dict.set("Type", Object::Name(b"Field".to_vec()));
+        field_dict.set("T", Object::string_literal("UserName"));
+        let field_id = src_doc.add_object(Object::Dictionary(field_dict));
+
+        let mut widget_dict = Dictionary::new();
+        widget_dict.set("Type", Object::Name(b"Annot".to_vec()));
+        widget_dict.set("Subtype", Object::Name(b"Widget".to_vec()));
+        widget_dict.set("Parent", Object::Reference(field_id));
+        widget_dict.set("P", Object::Reference(src_page_id)); // Back-reference to Page
+        let widget_id = src_doc.add_object(Object::Dictionary(widget_dict));
+
+        let mut id_map = HashMap::new();
+        let dest_widget_id = copy_object_graph(&src_doc, &mut dest_doc, widget_id, &mut id_map);
+
+        let copied_widget = dest_doc
+            .objects
+            .get(&dest_widget_id)
+            .and_then(|o| o.as_dict().ok())
+            .expect("Copied widget dict");
+
+        // 1. /Parent MUST NOT have been skipped because it's a form widget!
+        assert!(
+            copied_widget.get(b"Parent").is_ok(),
+            "Widget /Parent must NOT be stripped by copy_object_graph"
+        );
+        let new_parent_ref = copied_widget.get(b"Parent").unwrap().as_reference().unwrap();
+        assert_ne!(
+            new_parent_ref, field_id,
+            "Parent field reference must be remapped to new object in dest_doc"
         );
         assert!(
-            !extracted_text.contains("これは うんちです"),
-            "Fixture must NOT contain unwanted spaces"
+            dest_doc.objects.contains_key(&new_parent_ref),
+            "dest_doc must contain the copied parent Field object"
         );
+
+        // 2. /P on Annot MUST have been skipped to prevent source page inclusion!
         assert!(
-            !extracted_text.contains("これはうんち です"),
-            "Fixture must NOT contain unwanted spaces"
+            copied_widget.get(b"P").is_err(),
+            "Annot /P back-reference to Page must be stripped to prevent recursive source page inclusion"
         );
     }
 }
+

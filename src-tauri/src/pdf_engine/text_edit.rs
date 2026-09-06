@@ -271,6 +271,8 @@ pub fn embed_font(data: &[u8], page_index: usize, font_path: &str) -> Result<Vec
         .and_then(|s| s.to_str())
         .unwrap_or("CustomEmbeddedFont");
 
+    let parsed = super::font_unicode::ParsedTrueTypeFont::parse(font_data.clone(), font_name).ok();
+
     // 1. FontFile2 stream
     let mut font_stream_dict = Dictionary::new();
     font_stream_dict.set("Length", Object::Integer(font_file_len as i64));
@@ -283,19 +285,38 @@ pub fn embed_font(data: &[u8], page_index: usize, font_path: &str) -> Result<Vec
     descriptor.set("Type", Object::Name("FontDescriptor".into()));
     descriptor.set("FontName", Object::Name(font_name.as_bytes().to_vec()));
     descriptor.set("Flags", Object::Integer(32)); // Non-symbolic
-    descriptor.set(
-        "FontBBox",
-        Object::Array(vec![
-            Object::Real(-500.0),
-            Object::Real(-300.0),
-            Object::Real(1200.0),
-            Object::Real(900.0),
-        ]),
-    );
+
+    let (bbox, ascent, descent, cap_height) = if let Some(ref p) = parsed {
+        (
+            vec![
+                Object::Real(p.bbox[0]),
+                Object::Real(p.bbox[1]),
+                Object::Real(p.bbox[2]),
+                Object::Real(p.bbox[3]),
+            ],
+            p.ascent as f32,
+            p.descent as f32,
+            p.cap_height as f32,
+        )
+    } else {
+        (
+            vec![
+                Object::Real(-500.0),
+                Object::Real(-300.0),
+                Object::Real(1200.0),
+                Object::Real(900.0),
+            ],
+            800.0,
+            -200.0,
+            700.0,
+        )
+    };
+
+    descriptor.set("FontBBox", Object::Array(bbox));
     descriptor.set("ItalicAngle", Object::Real(0.0));
-    descriptor.set("Ascent", Object::Real(800.0));
-    descriptor.set("Descent", Object::Real(-200.0));
-    descriptor.set("CapHeight", Object::Real(700.0));
+    descriptor.set("Ascent", Object::Real(ascent));
+    descriptor.set("Descent", Object::Real(descent));
+    descriptor.set("CapHeight", Object::Real(cap_height));
     descriptor.set("StemV", Object::Real(70.0));
     descriptor.set("FontFile2", Object::Reference(font_stream_id));
 
@@ -310,8 +331,17 @@ pub fn embed_font(data: &[u8], page_index: usize, font_path: &str) -> Result<Vec
     font_dict.set("FontDescriptor", Object::Reference(descriptor_id));
     font_dict.set("FirstChar", Object::Integer(32));
     font_dict.set("LastChar", Object::Integer(255));
-    // Provide standard 224 character widths array (all 500 default)
-    let widths = (32..=255).map(|_| Object::Integer(500)).collect();
+
+    let widths: Vec<Object> = if let Some(ref p) = parsed {
+        (32..=255)
+            .map(|code| {
+                let gid = p.get_gid(code as u8 as char);
+                Object::Integer(p.get_glyph_width_1000(gid) as i64)
+            })
+            .collect()
+    } else {
+        (32..=255).map(|_| Object::Integer(500)).collect()
+    };
     font_dict.set("Widths", Object::Array(widths));
 
     let font_id = doc.add_object(Object::Dictionary(font_dict));
