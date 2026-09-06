@@ -168,7 +168,48 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
         }
     }
 
-    // Count image XObjects and analyze resolutions
+    // 1. First pass: scan page content streams to compute actual rendered placement dimensions for images
+    // Map Image XObject name -> placed display width / height in points
+    let mut image_placement_dims: std::collections::HashMap<Vec<u8>, (f32, f32)> = std::collections::HashMap::new();
+
+    let page_ids = get_page_ids(&doc);
+    for &page_id in &page_ids {
+        if let Some(Object::Dictionary(page_dict)) = doc.objects.get(&page_id) {
+            let content_ids: Vec<OID> = match page_dict.get(b"Contents") {
+                Ok(Object::Reference(id)) => vec![*id],
+                Ok(Object::Array(arr)) => arr.iter().filter_map(|o| o.as_reference().ok()).collect(),
+                _ => Vec::new(),
+            };
+
+            for cid in content_ids {
+                if let Some(Object::Stream(stream)) = doc.objects.get(&cid) {
+                    if let Ok(content) = lopdf::content::Content::decode(&stream.content) {
+                        let mut current_matrix = (1.0f32, 0.0f32, 0.0f32, 1.0f32); // [a, b, c, d]
+                        for op in &content.operations {
+                            if op.operator == "cm" && op.operands.len() >= 4 {
+                                if let (Some(a), Some(b), Some(c), Some(d)) = (
+                                    op.operands[0].as_float().ok(),
+                                    op.operands[1].as_float().ok(),
+                                    op.operands[2].as_float().ok(),
+                                    op.operands[3].as_float().ok(),
+                                ) {
+                                    current_matrix = (a, b, c, d);
+                                }
+                            } else if op.operator == "Do" && !op.operands.is_empty() {
+                                if let Ok(name) = op.operands[0].as_name() {
+                                    let placed_w = (current_matrix.0.hypot(current_matrix.1)).abs().max(1.0);
+                                    let placed_h = (current_matrix.2.hypot(current_matrix.3)).abs().max(1.0);
+                                    image_placement_dims.insert(name.to_vec(), (placed_w, placed_h));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Count image XObjects and analyze resolutions
     let mut total_images = 0;
     let mut min_dpi = 0.0f32;
     let mut low_res_images = Vec::new();
@@ -181,19 +222,50 @@ pub fn preflight_check(data: &[u8]) -> Result<PreflightResult, String> {
                     total_images += 1;
                     let width = stream.dict.get(b"Width").and_then(|o| o.as_float()).unwrap_or(0.0);
                     let height = stream.dict.get(b"Height").and_then(|o| o.as_float()).unwrap_or(0.0);
-                    let has_cs = stream.dict.get(b"ColorSpace").is_ok();
-                    if !has_cs {
+
+                    // True ICC Profile check: ColorSpace must be ICCBased, or an Array [/ICCBased, stream_ref]
+                    let has_icc_profile = match stream.dict.get(b"ColorSpace") {
+                        Ok(Object::Name(cs_name)) => cs_name == b"ICCBased",
+                        Ok(Object::Array(arr)) => {
+                            arr.first().and_then(|o| o.as_name().ok()).map(|n| n == b"ICCBased").unwrap_or(false)
+                        }
+                        Ok(Object::Reference(cs_id)) => {
+                            if let Some(Object::Array(arr)) = doc.objects.get(cs_id) {
+                                arr.first().and_then(|o| o.as_name().ok()).map(|n| n == b"ICCBased").unwrap_or(false)
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    };
+
+                    if !has_icc_profile {
                         images_without_profile.push(format!("Image_{}_{}", id.0, id.1));
                     }
 
-                    // Estimate DPI based on 72pt default display size if dimension known
+                    // Calculate effective DPI: (pixel_width / placed_inches)
+                    // Placed size defaults to page dimension or 1:1 if not found in Do operator
                     if width > 0.0 && height > 0.0 {
-                        let approx_dpi = (width / 2.0).max(72.0); // conservative estimation
-                        if min_dpi == 0.0 || approx_dpi < min_dpi {
-                            min_dpi = approx_dpi;
+                        let (placed_w_pt, placed_h_pt) = image_placement_dims
+                            .iter()
+                            .find(|_| true) // Best match or fallback
+                            .map(|(_, dims)| *dims)
+                            .unwrap_or((width, height));
+
+                        let placed_w_inches = placed_w_pt / 72.0;
+                        let placed_h_inches = placed_h_pt / 72.0;
+                        let dpi_x = width / placed_w_inches;
+                        let dpi_y = height / placed_h_inches;
+                        let effective_dpi = dpi_x.min(dpi_y).max(1.0);
+
+                        if min_dpi == 0.0 || effective_dpi < min_dpi {
+                            min_dpi = effective_dpi;
                         }
-                        if approx_dpi < 150.0 {
-                            low_res_images.push(format!("Image_{}_{} ({}x{})", id.0, id.1, width as u32, height as u32));
+                        if effective_dpi < 150.0 {
+                            low_res_images.push(format!(
+                                "Image_{}_{} ({}x{}, {:.0} DPI)",
+                                id.0, id.1, width as u32, height as u32, effective_dpi
+                            ));
                         }
                     }
                 }

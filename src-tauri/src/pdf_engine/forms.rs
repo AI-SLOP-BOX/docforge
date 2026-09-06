@@ -328,7 +328,7 @@ pub fn import_xfdf(data: &[u8], xfdf_content: &str) -> Result<Vec<u8>, String> {
     let mut current_page = 0;
     let mut current_contents = String::new();
     let mut current_author = String::new();
-    let current_rect = (0.0f32, 0.0f32, 100.0f32, 100.0f32);
+    let mut current_rect = (0.0f32, 0.0f32, 100.0f32, 100.0f32);
 
     for line in &lines {
         let trimmed = line.trim();
@@ -359,6 +359,21 @@ pub fn import_xfdf(data: &[u8], xfdf_content: &str) -> Result<Vec<u8>, String> {
                     current_author = xml_unescape(&title_str[..title_end]);
                 }
             }
+
+            // Extract coordinates: left, top, width, height
+            let parse_attr = |attr_name: &str| -> Option<f32> {
+                let pattern = format!("{}=\"", attr_name);
+                let start = trimmed.find(&pattern)?;
+                let rem = &trimmed[start + pattern.len()..];
+                let end = rem.find('\"')?;
+                rem[..end].parse::<f32>().ok()
+            };
+
+            let left = parse_attr("left").unwrap_or(current_rect.0);
+            let top = parse_attr("top").unwrap_or(current_rect.1);
+            let width = parse_attr("width").unwrap_or(100.0);
+            let height = parse_attr("height").unwrap_or(100.0);
+            current_rect = (left, top, left + width, top + height);
         }
 
         if trimmed.starts_with("<contents>") && trimmed.ends_with("</contents>") {

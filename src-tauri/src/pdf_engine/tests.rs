@@ -686,11 +686,138 @@ mod tests {
             exported_xfdf
         );
 
-        // Import back and verify unescaping
+        // Import back and verify unescaping and position preservation
         let imported_pdf = import_xfdf(&pdf, &exported_xfdf).expect("import_xfdf");
         let annots = get_annotations(&imported_pdf).expect("get_annotations");
         assert!(!annots.is_empty());
         let imported_c = annots[0]["contents"].as_str().unwrap();
         assert_eq!(imported_c, comment_text, "Imported contents must match unescaped text");
+        let imported_x = annots[0]["x"].as_f64().unwrap();
+        let imported_y = annots[0]["y"].as_f64().unwrap();
+        assert_eq!(imported_x, 100.0, "Imported annotation X must match exported left");
+        assert_eq!(imported_y, 100.0, "Imported annotation Y must match exported top");
+    }
+
+    #[test]
+    fn test_add_page_numbers_preserves_indirect_and_inherited_resources() {
+        let mut doc = Document::with_version("1.7");
+
+        // Create an indirect Resources dictionary containing an existing font /F1 and XObject
+        let mut font_f1 = Dictionary::new();
+        font_f1.set("Type", Object::Name(b"Font".to_vec()));
+        font_f1.set("Subtype", Object::Name(b"Type1".to_vec()));
+        font_f1.set("BaseFont", Object::Name(b"Times-Roman".to_vec()));
+        let f1_id = doc.add_object(Object::Dictionary(font_f1));
+
+        let mut indirect_res = Dictionary::new();
+        let mut f_dict = Dictionary::new();
+        f_dict.set("F1", Object::Reference(f1_id));
+        indirect_res.set("Font", Object::Dictionary(f_dict));
+        let res_id = doc.add_object(Object::Dictionary(indirect_res));
+
+        // Create a page referencing Resources indirectly via Reference
+        let mut page = Dictionary::new();
+        page.set("Type", Object::Name("Page".into()));
+        page.set("Resources", Object::Reference(res_id));
+        page.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(595.0),
+                Object::Real(842.0),
+            ]),
+        );
+        let p_id = doc.add_object(Object::Dictionary(page));
+
+        let mut pages = Dictionary::new();
+        pages.set("Type", Object::Name("Pages".into()));
+        pages.set("Kids", Object::Array(vec![Object::Reference(p_id)]));
+        pages.set("Count", Object::Integer(1));
+        let pages_id = doc.add_object(Object::Dictionary(pages));
+
+        let mut cat = Dictionary::new();
+        cat.set("Type", Object::Name("Catalog".into()));
+        cat.set("Pages", Object::Reference(pages_id));
+        let cat_id = doc.add_object(Object::Dictionary(cat));
+        doc.trailer.set("Root", Object::Reference(cat_id));
+
+        let mut pdf_data = Vec::new();
+        doc.save_to(&mut pdf_data).unwrap();
+
+        let numbered = add_page_numbers(&pdf_data, "bottom-center", 10.0, 1).expect("add_page_numbers");
+        let out_doc = Document::load_mem(&numbered).expect("load numbered doc");
+        let page_dict = out_doc.get_dictionary(p_id).expect("get page");
+        let res = page_dict.get(b"Resources").expect("Resources entry");
+        let res_dict = match res {
+            Object::Dictionary(d) => d,
+            Object::Reference(id) => out_doc.get_dictionary(*id).expect("get indirect dict"),
+            _ => panic!("Expected dictionary or reference"),
+        };
+        let font_dict = res_dict.get(b"Font").expect("Font subdict").as_dict().expect("Font dict");
+        assert!(font_dict.get(b"F1").is_ok(), "Pre-existing F1 font must NOT be wiped out!");
+        assert!(font_dict.get(b"DocForgeHelv").is_ok(), "DocForgeHelv font must be added!");
+    }
+
+    #[test]
+    fn test_sanitize_document_purges_names_tree() {
+        let mut doc = Document::with_version("1.7");
+
+        // Build /Names -> /JavaScript and /EmbeddedFiles
+        let mut js_dict = Dictionary::new();
+        js_dict.set("Names", Object::Array(vec![Object::String(b"TestJS".to_vec(), lopdf::StringFormat::Literal)]));
+        let js_id = doc.add_object(Object::Dictionary(js_dict));
+
+        let mut ef_dict = Dictionary::new();
+        ef_dict.set("Names", Object::Array(vec![Object::String(b"Malware.exe".to_vec(), lopdf::StringFormat::Literal)]));
+        let ef_id = doc.add_object(Object::Dictionary(ef_dict));
+
+        let mut names_dict = Dictionary::new();
+        names_dict.set("JavaScript", Object::Reference(js_id));
+        names_dict.set("EmbeddedFiles", Object::Reference(ef_id));
+        let names_id = doc.add_object(Object::Dictionary(names_dict));
+
+        let mut page = Dictionary::new();
+        page.set("Type", Object::Name("Page".into()));
+        page.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(595.0),
+                Object::Real(842.0),
+            ]),
+        );
+        let p_id = doc.add_object(Object::Dictionary(page));
+
+        let mut pages = Dictionary::new();
+        pages.set("Type", Object::Name("Pages".into()));
+        pages.set("Kids", Object::Array(vec![Object::Reference(p_id)]));
+        pages.set("Count", Object::Integer(1));
+        let pages_id = doc.add_object(Object::Dictionary(pages));
+
+        let mut cat = Dictionary::new();
+        cat.set("Type", Object::Name("Catalog".into()));
+        cat.set("Pages", Object::Reference(pages_id));
+        cat.set("Names", Object::Reference(names_id));
+        let cat_id = doc.add_object(Object::Dictionary(cat));
+        doc.trailer.set("Root", Object::Reference(cat_id));
+
+        let mut pdf_data = Vec::new();
+        doc.save_to(&mut pdf_data).unwrap();
+
+        let (sanitized_bytes, summary) = sanitize_document(&pdf_data).expect("sanitize_document");
+        assert!(summary.javascript_removed, "Must report javascript removed from Names tree");
+        assert!(summary.attachments_removed > 0, "Must report attachments removed from Names tree");
+
+        let clean_doc = Document::load_mem(&sanitized_bytes).expect("load clean doc");
+        let root = clean_doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let root_dict = clean_doc.get_dictionary(root).unwrap();
+
+        if let Ok(n_ref) = root_dict.get(b"Names").and_then(|o| o.as_reference()) {
+            let n_dict = clean_doc.get_dictionary(n_ref).unwrap();
+            assert!(!n_dict.has(b"JavaScript"), "Names.JavaScript must be removed!");
+            assert!(!n_dict.has(b"EmbeddedFiles"), "Names.EmbeddedFiles must be removed!");
+        }
     }
 }

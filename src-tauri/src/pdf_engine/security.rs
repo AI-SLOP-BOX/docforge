@@ -390,16 +390,58 @@ pub fn sanitize_document(data: &[u8]) -> Result<(Vec<u8>, SanitizeSummary), Stri
             root_dict.remove(b"PieceInfo");
             summary.metadata_removed = true;
         }
-        // Purge embedded JavaScript
-        if root_dict.has(b"Names") || root_dict.has(b"OpenAction") || root_dict.has(b"AA") {
+        // Purge OpenAction and AA
+        if root_dict.has(b"OpenAction") {
             root_dict.remove(b"OpenAction");
+            summary.javascript_removed = true;
+        }
+        if root_dict.has(b"AA") {
             root_dict.remove(b"AA");
             summary.javascript_removed = true;
         }
-        // Purge embedded files / attachments
+
+        // Purge Catalog-level JavaScript & EmbeddedFiles
+        if root_dict.has(b"JavaScript") {
+            root_dict.remove(b"JavaScript");
+            summary.javascript_removed = true;
+        }
         if root_dict.has(b"EmbeddedFiles") {
             root_dict.remove(b"EmbeddedFiles");
             summary.attachments_removed += 1;
+        }
+    }
+
+    // Inspect and sanitize /Names dictionary (direct or indirect)
+    let names_id_opt = if let Some(Object::Dictionary(ref root_dict)) = doc.objects.get(&root_id) {
+        match root_dict.get(b"Names") {
+            Ok(Object::Reference(id)) => Some(*id),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    if let Some(names_id) = names_id_opt {
+        if let Some(Object::Dictionary(ref mut names_dict)) = doc.objects.get_mut(&names_id) {
+            if names_dict.has(b"JavaScript") {
+                names_dict.remove(b"JavaScript");
+                summary.javascript_removed = true;
+            }
+            if names_dict.has(b"EmbeddedFiles") {
+                names_dict.remove(b"EmbeddedFiles");
+                summary.attachments_removed += 1;
+            }
+        }
+    } else if let Some(Object::Dictionary(ref mut root_dict)) = doc.objects.get_mut(&root_id) {
+        if let Ok(Object::Dictionary(ref mut names_dict)) = root_dict.get_mut(b"Names") {
+            if names_dict.has(b"JavaScript") {
+                names_dict.remove(b"JavaScript");
+                summary.javascript_removed = true;
+            }
+            if names_dict.has(b"EmbeddedFiles") {
+                names_dict.remove(b"EmbeddedFiles");
+                summary.attachments_removed += 1;
+            }
         }
     }
 

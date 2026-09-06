@@ -42,20 +42,20 @@ A high-performance, professional-grade integrated PDF editor with 100% local, of
 - Digital signature fields
 
 ### Security & Compliance
-- AES-128 / AES-256 document encryption
-- Digital Signatures (PKCS#7 / PAdES)
-- Hardware Token Support (PKCS#11)
-- Deep Redaction (complete physical eradication of underlying bytes & streams)
+- AES-128 / AES-256 document encryption & permission flags
+- Visual Signature Field layout & signature placeholder management (cryptographic PKCS#7 signing planned)
+- Deep Redaction (stream de-tokenization & physical removal of text tokens from streams)
+- Document Sanitization (removal of metadata, annotations, thumbnails, and Names JavaScript/EmbeddedFiles)
 
 ### Conversion & Interoperability
-- PDF to High-Res Images (PNG, JPEG, WebP)
-- Images to Vectorized PDF
-- HTML to Print-Quality PDF
+- PDF to High-Res Images (PNG, JPEG via pdftoppm)
+- Images to PDF
+- HTML to Print-Quality PDF (with isolated temporary workspaces & secure file sandbox)
 - PDF to Plain Text & Structured CSV
 - PDF/A & PDF/X Standards Compliance
 
 ### OCR (Optical Character Recognition)
-- High-accuracy multilingual text recognition (Tesseract LSTM engine)
+- High-accuracy multilingual text recognition (Tesseract OCR CLI)
 - Searchable PDF generation (scanned image XObjects + invisible selectable text overlay)
 - EPUB digital book conversion
 - Layout-preserving OCR reconstruction
@@ -63,8 +63,8 @@ A high-performance, professional-grade integrated PDF editor with 100% local, of
 ### Color Management & Prepress
 - RGB to CMYK color space transformations
 - ICC Output Intent embedding
-- Total Area Coverage (TAC) ink limit inspection
-- Preflight verification and font embedding validation
+- CMYK paint operand ink coverage inspection & threshold verification
+- Preflight verification (FontDescriptor indirect reference tracking, image DPI & ICC detection)
 - Color separation preview
 
 ### Advanced Engineering & Forensics

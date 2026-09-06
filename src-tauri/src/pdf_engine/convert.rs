@@ -224,7 +224,10 @@ pub fn compress_pdf_quality(data: &[u8], quality: u8) -> Result<Vec<u8>, String>
             let raw_data = if let Ok(filter) = stream.dict.get(b"Filter") {
                 if let Ok(filter_name) = filter.as_name() {
                     if filter_name == b"FlateDecode" {
-                        let _ = stream.decompress();
+                        if stream.decompress().is_err() {
+                            // If decompression fails (corrupted or unsupported predictor), do NOT double-compress
+                            continue;
+                        }
                         stream.content.clone()
                     } else {
                         // Unknown or complex filter (e.g. DCTDecode for JPEG) - keep as is
@@ -305,19 +308,53 @@ pub fn add_page_numbers(
         let new_cid = doc.add_object(new_stream);
 
         // Register /DocForgeHelv font into page's Resources and attach content stream
-        if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
-            // Update Resources -> Font
-            let mut resources_dict = match page_dict.get(b"Resources") {
+        // Safely extract or inherit existing Resources (direct or indirect) without blowing them away
+        let mut resources_dict = if let Some(Object::Dictionary(page_dict)) = doc.objects.get(&page_id) {
+            match page_dict.get(b"Resources") {
                 Ok(Object::Dictionary(d)) => d.clone(),
-                _ => Dictionary::new(),
-            };
+                Ok(Object::Reference(res_ref)) => {
+                    doc.objects.get(res_ref).and_then(|o| o.as_dict().ok()).cloned().unwrap_or_default()
+                }
+                _ => {
+                    // Check parent for inherited Resources
+                    let mut parent_id = page_dict.get(b"Parent").and_then(|p| p.as_reference()).ok();
+                    let mut inherited_res = Dictionary::new();
+                    while let Some(pid) = parent_id {
+                        if let Some(Object::Dictionary(parent_dict)) = doc.objects.get(&pid) {
+                            if let Ok(p_res) = parent_dict.get(b"Resources") {
+                                if let Ok(d) = p_res.as_dict() {
+                                    inherited_res = d.clone();
+                                    break;
+                                } else if let Ok(r_id) = p_res.as_reference() {
+                                    if let Some(Object::Dictionary(d)) = doc.objects.get(&r_id) {
+                                        inherited_res = d.clone();
+                                        break;
+                                    }
+                                }
+                            }
+                            parent_id = parent_dict.get(b"Parent").and_then(|p| p.as_reference()).ok();
+                        } else {
+                            break;
+                        }
+                    }
+                    inherited_res
+                }
+            }
+        } else {
+            Dictionary::new()
+        };
 
-            let mut fonts_dict = match resources_dict.get(b"Font") {
-                Ok(Object::Dictionary(fd)) => fd.clone(),
-                _ => Dictionary::new(),
-            };
-            fonts_dict.set("DocForgeHelv", Object::Reference(font_id));
-            resources_dict.set("Font", Object::Dictionary(fonts_dict));
+        let mut fonts_dict = match resources_dict.get(b"Font") {
+            Ok(Object::Dictionary(fd)) => fd.clone(),
+            Ok(Object::Reference(f_ref)) => {
+                doc.objects.get(f_ref).and_then(|o| o.as_dict().ok()).cloned().unwrap_or_default()
+            }
+            _ => Dictionary::new(),
+        };
+        fonts_dict.set("DocForgeHelv", Object::Reference(font_id));
+        resources_dict.set("Font", Object::Dictionary(fonts_dict));
+
+        if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
             page_dict.set("Resources", Object::Dictionary(resources_dict));
 
             // Combine Contents safely as an Array [existing..., new_cid]
