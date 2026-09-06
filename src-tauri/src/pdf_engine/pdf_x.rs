@@ -11,7 +11,7 @@ pub struct PdfxValidationReport {
     pub details: serde_json::Value,
 }
 
-/// Strict ISO 15930 Validator for PDF/X-1a:2001 and PDF/X-4:2010
+/// Preflight and compliance assistance checker for PDF/X-1a:2001 and PDF/X-4:2010 (Preflight Validation)
 pub fn validate_pdfx_compliance(
     data: &[u8],
     target_standard: &str,
@@ -21,9 +21,9 @@ pub fn validate_pdfx_compliance(
     let is_x1a = target_standard.to_lowercase().contains("x-1a")
         || target_standard.to_lowercase().contains("x1a");
     let standard_name = if is_x1a {
-        "PDF/X-1a:2001 (ISO 15930-1)"
+        "PDF/X-1a:2001 (ISO 15930-1 Preflight)"
     } else {
-        "PDF/X-4:2010 (ISO 15930-7)"
+        "PDF/X-4:2010 (ISO 15930-7 Preflight)"
     };
 
     let mut passed = Vec::new();
@@ -288,7 +288,7 @@ pub fn validate_pdfx_compliance(
     })
 }
 
-/// Convert and certify a PDF document into full ISO PDF/X-1a:2001 or PDF/X-4:2010 compliance
+/// Prepare and structure a PDF document for PDF/X-1a:2001 or PDF/X-4:2010 preflight compliance assistance
 pub fn convert_to_pdfx_standard(
     data: &[u8],
     standard: &str,

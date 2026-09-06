@@ -76,7 +76,7 @@ export const AccessibilitySection: React.FC<AccessibilitySectionProps> = ({
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 8, color: 'var(--text-muted)' }}>
-            <div>タグ付き構造 (Marked): {accessReport.has_tags ? '[OK] 適合' : '[NG] 未設定 (タグなし)'}</div>
+            <div>タグ付き構造 (MarkInfo/StructTree): {accessReport.has_tags ? '[OK] 構造検出' : '[NG] 未設定 (タグなし)'}</div>
             <div>文書タイトル (Title): {accessReport.has_title ? '[OK] 設定済' : '[NG] 未設定'}</div>
             <div>文書言語 (Lang): {accessReport.has_language ? '[OK] 設定済' : '[NG] 未設定'}</div>
           </div>

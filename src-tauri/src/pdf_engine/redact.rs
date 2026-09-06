@@ -144,7 +144,8 @@ pub fn redact_text(data: &[u8], search_text: &str, replacement: &str) -> Result<
         let mut operations = Vec::new();
         for cid in &content_ids {
             if let Some(Object::Stream(stream)) = doc.objects.get(cid) {
-                if let Ok(c) = lopdf::content::Content::decode(&stream.content) {
+                let bytes = stream.decompressed_content().unwrap_or_else(|_| stream.content.clone());
+                if let Ok(c) = lopdf::content::Content::decode(&bytes) {
                     operations.extend(c.operations);
                 }
             }
@@ -213,11 +214,8 @@ pub fn redact_text(data: &[u8], search_text: &str, replacement: &str) -> Result<
                 if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
                     dict.set("Contents", Object::Reference(new_content_id));
                 }
-                for cid in content_ids {
-                    if cid != new_content_id {
-                        doc.objects.remove(&cid);
-                    }
-                }
+                // Do NOT call doc.objects.remove(&cid) directly, as content streams might be shared across pages.
+                // prune_objects() will cleanly remove streams that are no longer referenced by any page.
             }
         }
     }
@@ -478,7 +476,8 @@ pub fn redact_text_deep(data: &[u8], search_text: &str, color: &str) -> Result<V
         let mut operations = Vec::new();
         for cid in &content_ids {
             if let Some(Object::Stream(stream)) = doc.objects.get(cid) {
-                if let Ok(c) = lopdf::content::Content::decode(&stream.content) {
+                let bytes = stream.decompressed_content().unwrap_or_else(|_| stream.content.clone());
+                if let Ok(c) = lopdf::content::Content::decode(&bytes) {
                     operations.extend(c.operations);
                 }
             }
@@ -565,12 +564,7 @@ pub fn redact_text_deep(data: &[u8], search_text: &str, color: &str) -> Result<V
             dict.set("Contents", Object::Reference(new_content_id));
         }
 
-        // Clean up old unreferenced content stream objects so text is physically eradicated
-        for cid in content_ids {
-            if cid != new_content_id {
-                doc.objects.remove(&cid);
-            }
-        }
+        // Avoid removing cid manually to protect shared streams; prune_objects handles unreferenced streams safely
     }
 
     // Prune any unreferenced objects across the document

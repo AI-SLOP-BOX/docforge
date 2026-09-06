@@ -392,4 +392,93 @@ mod tests {
             "Replacement text must be present"
         );
     }
+
+    #[test]
+    fn test_redact_text_compressed_stream() {
+        let text_to_replace = "TOP-SECRET-DEFLATE";
+        let replacement = "PURGED";
+
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.add_object(Object::Dictionary(Dictionary::new()));
+        let content = format!("BT /F1 12 Tf 50 750 Td ({text_to_replace}) Tj ET");
+        
+        // Compress content stream with FlateDecode
+        use flate2::write::ZlibEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(content.as_bytes()).unwrap();
+        let compressed_bytes = encoder.finish().unwrap();
+
+        let mut stream_dict = Dictionary::new();
+        stream_dict.set("Filter", Object::Name("FlateDecode".into()));
+        let stream = lopdf::Stream::new(stream_dict, compressed_bytes);
+        assert_eq!(
+            stream.dict.get(b"Filter").unwrap().as_name().unwrap(),
+            b"FlateDecode"
+        );
+        let content_id = doc.add_object(Object::Stream(stream));
+
+        let mut page_dict = Dictionary::new();
+        page_dict.set("Type", Object::Name("Page".into()));
+        page_dict.set("Parent", Object::Reference(pages_id));
+        page_dict.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(595.0),
+                Object::Real(842.0),
+            ]),
+        );
+        page_dict.set("Contents", Object::Reference(content_id));
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+
+        let mut pages_dict = Dictionary::new();
+        pages_dict.set("Type", Object::Name("Pages".into()));
+        pages_dict.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        pages_dict.set("Count", Object::Integer(1));
+        doc.objects.insert(pages_id, Object::Dictionary(pages_dict));
+
+        let mut root_dict = Dictionary::new();
+        root_dict.set("Type", Object::Name("Catalog".into()));
+        root_dict.set("Pages", Object::Reference(pages_id));
+        let root_id = doc.add_object(Object::Dictionary(root_dict));
+        doc.trailer.set("Root", Object::Reference(root_id));
+
+        let mut pdf_data = Vec::new();
+        doc.save_to(&mut pdf_data).unwrap();
+
+        // Perform redact_text on FlateDecode-compressed stream
+        let redacted = redact_text(&pdf_data, text_to_replace, replacement)
+            .expect("redact_text must succeed even on compressed stream");
+
+        let res_doc = Document::load_mem(&redacted).expect("Parse output PDF");
+        let pids = get_page_ids(&res_doc);
+        let content_bytes = res_doc.get_page_content(pids[0]).expect("Get page content");
+        let decompressed = String::from_utf8_lossy(&content_bytes);
+
+        assert!(
+            !decompressed.contains(text_to_replace),
+            "Decompressed stream must not contain target text"
+        );
+        assert!(
+            decompressed.contains(replacement),
+            "Decompressed stream must contain replacement text"
+        );
+    }
+
+    #[test]
+    fn test_empty_mock_security_responses() {
+        // Confirm no fake digital IDs or fake certificates are returned
+        let ids = list_digital_ids().expect("list_digital_ids must succeed");
+        assert!(ids.is_empty(), "list_digital_ids must be empty when no certificates enrolled");
+
+        let certs = list_certificates().expect("list_certificates must succeed");
+        assert!(certs.is_empty(), "list_certificates must be empty");
+
+        let ts_res = add_timestamp(&[], "http://tsa.example.com");
+        assert!(ts_res.is_err(), "add_timestamp must reject without real TSA connection");
+    }
 }

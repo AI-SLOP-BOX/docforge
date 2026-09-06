@@ -98,21 +98,21 @@ export function SecurityPanel({
         </AccentBtn>
       </div>
 
-      {/* Card 2: Digital Signatures */}
+      {/* Card 2: Digital Signature Fields */}
       <div className="inspector-card">
         <div className="inspector-card-header">
-          <span>PKCS#7 デジタル署名</span>
-          <span style={{ fontSize: 9, color: 'var(--green)', fontWeight: 600 }}>AUTH</span>
+          <span>署名フィールド配置</span>
+          <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 600 }}>FIELD</span>
         </div>
-        <div className="inspector-card-desc">電子署名フィールドと理由を付与</div>
-        <Input value={signerName} onChange={setSignerName} placeholder="署名者名 (例: Taro Yamada)" />
+        <div className="inspector-card-desc">署名用ウィジェット枠・理由メタデータを配置</div>
+        <Input value={signerName} onChange={setSignerName} placeholder="署名予定者名 (例: Taro Yamada)" />
         <Input value={signReason} onChange={setSignReason} placeholder="署名理由 (例: 承認済み)" />
         <AccentBtn
           onClick={() => exec('add_digital_signature', { page_index: 0, x: 400, y: 50, width: 150, height: 60, signer_name: signerName, reason: signReason })}
           disabled={!signerName}
           style={{ marginTop: 6 }}
         >
-          デジタル署名を追加
+          署名フィールド枠を追加
         </AccentBtn>
         <AccentBtn
           onClick={handleVerify}

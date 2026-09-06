@@ -3,6 +3,9 @@ use lopdf::{Dictionary, Document, Object};
 
 // ===== DIGITAL SIGNATURE =====
 
+/// PDF上に電子署名用ウィジェットフィールド（署名枠）およびプレースホルダー辞書を追加します。
+/// ※ 注意: 本機能は暗号鍵/証明書によるPKCS#7バイナリ署名（ハッシュ計算・暗号化）を行うものではなく、
+///    署名対象の位置・署名者名・理由メタデータを保持する「未署名フォームフィールド（署名プレースホルダー）」を作成します。
 pub fn add_digital_signature(
     data: &[u8],
     page_index: usize,
@@ -20,7 +23,7 @@ pub fn add_digital_signature(
         return Err("Page index out of range".into());
     }
 
-    // Create signature dictionary
+    // Create signature dictionary (placeholder with empty Contents)
     let mut sig_dict = Dictionary::new();
     sig_dict.set("Type", Object::Name("Sig".into()));
     sig_dict.set("Filter", Object::Name("Adobe.PPKLite".into()));
@@ -458,15 +461,8 @@ pub struct DigitalID {
 }
 
 pub fn list_digital_ids() -> Result<Vec<DigitalID>, String> {
-    // Stub: In production, this would read from system certificate store
-    let ids = vec![DigitalID {
-        name: "Sample Digital ID".to_string(),
-        issuer: "CN=Test CA, O=Test Org".to_string(),
-        valid_from: "2024-01-01".to_string(),
-        valid_to: "2025-12-31".to_string(),
-        key_usage: vec!["digitalSignature".to_string(), "nonRepudiation".to_string()],
-    }];
-    Ok(ids)
+    // Honest: Return empty list when no OS digital identity / Keychain certificate is enrolled
+    Ok(Vec::new())
 }
 
 // ===== TIMESTAMP & VALIDATION =====
@@ -480,41 +476,8 @@ pub struct TimestampResult {
 }
 
 // Add timestamp to PDF
-pub fn add_timestamp(data: &[u8], _timestamp_authority: &str) -> Result<Vec<u8>, String> {
-    let mut doc = Document::load_mem(data).map_err(|e| format!("Failed to load PDF: {e}"))?;
-
-    // Create timestamp dictionary
-    let mut ts_dict = Dictionary::new();
-    ts_dict.set("Type", Object::Name("DocTimeStamp".into()));
-    ts_dict.set("F", Object::Integer(1)); // Signatures exist
-    ts_dict.set(
-        "M",
-        Object::String(
-            "2024-01-01T00:00:00Z".as_bytes().to_vec(),
-            lopdf::StringFormat::Literal,
-        ),
-    );
-
-    // In production, this would:
-    // 1. Connect to TSA (Time Stamp Authority)
-    // 2. Get a signed timestamp token
-    // 3. Embed it in the PDF
-
-    let ts_id = doc.add_object(Object::Dictionary(ts_dict));
-
-    // Add to AcroForm
-    let root_id = doc
-        .trailer
-        .get(b"Root")
-        .and_then(|o| o.as_reference())
-        .ok()
-        .ok_or("No root")?;
-
-    if let Some(Object::Dictionary(ref mut root_dict)) = doc.objects.get_mut(&root_id) {
-        root_dict.set("DocTimeStamp", Object::Reference(ts_id));
-    }
-
-    save_doc(&mut doc)
+pub fn add_timestamp(_data: &[u8], _timestamp_authority: &str) -> Result<Vec<u8>, String> {
+    Err("RFC 3161 タイムスタンプ局(TSA)への暗号化通信モジュールは現在未設定です。".into())
 }
 
 // Verify timestamp
@@ -535,11 +498,10 @@ pub fn verify_timestamp(data: &[u8]) -> Result<TimestampResult, String> {
         }
     }
 
-    let is_valid = timestamp.is_some();
     Ok(TimestampResult {
-        timestamp: timestamp.unwrap_or_else(|| "No timestamp found".into()),
-        authority: "Unknown".into(),
-        valid: is_valid,
+        timestamp: timestamp.unwrap_or_else(|| "DocTimeStampなし".into()),
+        authority: "外部TSA未照合".into(),
+        valid: false, // Honest: Cannot assert validity without RFC 3161 cryptographic verification
         hash: String::new(),
     })
 }
@@ -558,32 +520,14 @@ pub struct Certificate {
 
 // List system certificates
 pub fn list_certificates() -> Result<Vec<Certificate>, String> {
-    // In production, this would read from system certificate store
-    // For now, return sample certificates
-    let certs = vec![Certificate {
-        subject: "CN=DocForge Signing Certificate".into(),
-        issuer: "CN=DocForge CA".into(),
-        valid_from: "2024-01-01".into(),
-        valid_to: "2025-12-31".into(),
-        serial: "00:11:22:33:44:55:66:77".into(),
-        key_usage: vec!["digitalSignature".into(), "nonRepudiation".into()],
-    }];
-    Ok(certs)
+    // Honest: No mock certificates returned
+    Ok(Vec::new())
 }
 
 // Import certificate from file
 pub fn import_certificate(cert_path: &str) -> Result<Certificate, String> {
     let _cert_data =
-        std::fs::read(cert_path).map_err(|e| format!("Failed to read certificate: {e}"))?;
+        std::fs::read(cert_path).map_err(|e| format!("証明書ファイルの読み込みに失敗しました: {e}"))?;
 
-    // In production, this would parse the X.509 certificate
-    // For now, return a placeholder
-    Ok(Certificate {
-        subject: "Imported Certificate".into(),
-        issuer: "Unknown".into(),
-        valid_from: "2024-01-01".into(),
-        valid_to: "2025-12-31".into(),
-        serial: "00:00:00:00".into(),
-        key_usage: vec!["digitalSignature".into()],
-    })
+    Err("X.509証明書の完全なDER/PEMパースおよび暗号鍵インポートには外部ASN.1/PKIライブラリの連携が必要です。".into())
 }
